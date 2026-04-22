@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ReCAP Query Workbench</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css?v=20260407" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Prototype Interface</p>
+          <p class="build-stamp">Build 2026-04-14-2</p>
+          <h1>ReCAP Query Workbench</h1>
+          <p class="hero-text">
+            A focused interface for building regular-path queries with
+            property constraints, inspecting the derived NFA, and comparing
+            naive versus ReCAP-style selective aggregate execution.
+          </p>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="panel controls-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="section-kicker">Input</p>
+              <h2>Query Parameters</h2>
+            </div>
+          </div>
+
+          <div class="control-stack">
+            <form class="generate-form" id="regex-form">
+              <label class="field regex-field" for="regex-input">
+                <span>Regex input</span>
+                <input
+                  id="regex-input"
+                  type="text"
+                  value="Domestic+Foreign"
+                  placeholder="Enter a regex like Domestic+Foreign"
+                />
+              </label>
+              <button class="primary-button" type="submit">Generate NFA</button>
+            </form>
+
+            <div class="field-grid">
+              <label class="field">
+                <span>Start vertex</span>
+                <input id="start-node" type="number" value="383" />
+              </label>
+              <label class="field">
+                <span>Upper hop bound</span>
+                <input id="upper-bound" type="number" min="1" max="12" value="2" />
+              </label>
+              <label class="field">
+                <span>Lower hop bound</span>
+                <input id="lower-bound" type="number" min="0" max="12" value="1" />
+              </label>
+            </div>
+
+            <div class="toggle-row">
+              <button class="mode-toggle active" data-mode="naive">Naive</button>
+              <button class="mode-toggle" data-mode="advanced">Advanced ReCAP</button>
+            </div>
+
+            <div class="notice">
+              The NFA stays visible, while the tabular edge data is tucked away
+              for later use in DuckDB-oriented execution.
+            </div>
+
+            <button class="primary-button wide-button" id="run-recap" type="button" onclick="document.getElementById('recap-result').textContent='Running ReCAP...'; if (window.__runRecap) { window.__runRecap(); } else if (window.__runRecapFallback) { window.__runRecapFallback(); }">
+              Run ReCAP
+            </button>
+            <div class="result-box" id="recap-result">
+              Number of paths [l, u] from s are: waiting for execution.
+            </div>
+            <div class="run-status hidden" id="run-status">
+              <span class="spinner" aria-hidden="true"></span>
+              <span id="run-status-text">Executing ReCAP...</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel viz-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="section-kicker">Automaton</p>
+              <h2>Generated NFA</h2>
+            </div>
+            <span class="badge" id="nfa-status">Ready to render</span>
+          </div>
+
+          <div class="nfa-stage">
+            <div id="nfa-visualization"></div>
+            <div class="nfa-table-panel" id="nfa-table-panel"></div>
+
+            <div class="nfa-caption" id="nfa-caption">
+              Enter a regex and generate the matching prototype NFA view.
+            </div>
+          </div>
+        </section>
+
+        <section class="summary-panel">
+          <div class="metric">
+            <span class="metric-label">Mode</span>
+            <strong id="active-mode-label">Naive baseline</strong>
+          </div>
+          <div class="metric">
+            <span class="metric-label">Regex</span>
+            <strong id="active-regex-label">Domestic+Foreign</strong>
+          </div>
+          <div class="metric">
+            <span class="metric-label">Engine</span>
+            <strong>DuckDB</strong>
+          </div>
+        </section>
+
+        <section class="panel code-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="section-kicker">Constraints</p>
+              <h2 id="editor-title">Python Constraint Sandbox</h2>
+            </div>
+            <span class="badge" id="editor-badge">D accumulates edge tuples</span>
+          </div>
+
+          <div id="naive-editor" class="editor-group active">
+            <div class="editor-card">
+              <div class="editor-title">Naive final viability check</div>
+              <div class="sandbox-toolbar">
+                <span class="runtime-status" id="runtime-status">Python runtime loading...</span>
+                <!-- <button class="primary-button" id="run-python" type="button">Run Python</button> -->
+              </div>
+              <textarea id="python-editor" class="code-input" rows="18">def is_viable_d_final(D):
+    # D is a list of edge dictionaries collected along the path
+    if not D:
+        return True
+
+    times = [edge["time"] for edge in D]
+    monotonic = True
+    for t in range(1, len(times)):
+       if times[t] > times[t-1]: continue
+       else:
+          monotonic = False
+          break
+
+    return monotonic</textarea>
+              <!-- <pre class="runtime-output" id="python-output">Run the editable Python block. The sandbox will call is_viable_d_final(D) internally and require a True/False result.</pre> -->
+            </div>
+          </div>
+
+          <div id="advanced-editor" class="editor-group">
+            <div class="editor-card">
+              <div class="editor-title">Advanced selective aggregate sandbox</div>
+              <div class="sandbox-toolbar">
+                <span class="runtime-status" id="advanced-runtime-status">Editable functions ready</span>
+                <button class="primary-button" id="run-advanced-python" type="button">Run Advanced Python</button>
+              </div>
+              <pre class="runtime-output" id="advanced-python-output">Run the five editable functions. The sandbox will simulate a small path and require is_viable_d_final(D) to return True/False.</pre>
+            </div>
+            <div class="functions-grid">
+              <div class="editor-card compact-function-card">
+                <div class="editor-title">init_d</div>
+                <textarea id="advanced-init-d" class="code-input advanced-code-input compact-code-input" rows="8">def init_d():
+    return {
+        "last_time": None,
+        "last_domestic_day": None,
+        "foreign_day": None,
+        "edge_ids": []
+    }</textarea>
+              </div>
+              <div class="editor-card wide-function-card">
+                <div class="function-card-header">
+                  <div class="editor-title">update_d</div>
+                  <div class="case-toggle" aria-label="update_d case toggle">
+                    <button class="case-button" type="button" data-case-target="update_d" data-case-mode="with">With CASE</button>
+                    <button class="case-button active" type="button" data-case-target="update_d" data-case-mode="without">Without CASE</button>
+                  </div>
+                </div>
+                <textarea id="advanced-update-d" class="code-input advanced-code-input" rows="10">def update_d(D, P_nfa_state, T_to_state, Edge):
+    D["edge_ids"] = D["edge_ids"] + [Edge["id"]]
+    D["last_time"] = Edge["time"]
+    if Edge["label"] == "Domestic":
+        D["last_domestic_day"] = Edge["day"]
+    if Edge["label"] == "Foreign":
+        D["foreign_day"] = Edge["day"]
+    D["last_transition"] = (P_nfa_state, T_to_state)
+    return D</textarea>
+              </div>
+              <div class="editor-card wide-function-card">
+                <div class="function-card-header">
+                  <div class="editor-title">is_viable_d</div>
+                  <div class="case-toggle" aria-label="is_viable_d case toggle">
+                    <button class="case-button" type="button" data-case-target="is_viable_d" data-case-mode="with">With CASE</button>
+                    <button class="case-button active" type="button" data-case-target="is_viable_d" data-case-mode="without">Without CASE</button>
+                  </div>
+                </div>
+                <textarea id="advanced-is-viable-d" class="code-input advanced-code-input" rows="10">def is_viable_d(D, P_nfa_state, T_to_state, Edge):
+    if Edge["id"] in D["edge_ids"]:
+        return False
+    if D["last_time"] is not None and Edge["time"] <= D["last_time"]:
+        return False
+    if Edge["label"] == "Domestic" and D["last_domestic_day"] is not None:
+        return abs(Edge["day"] - D["last_domestic_day"]) <= 2
+    return True</textarea>
+              </div>
+              <div class="editor-card compact-function-card">
+                <div class="editor-title">finalize_d</div>
+                <textarea id="advanced-finalize-d" class="code-input advanced-code-input compact-code-input" rows="8">def finalize_d(D):
+    return {
+        **D,
+        "has_trail": len(D["edge_ids"]) == len(set(D["edge_ids"]))
+    }</textarea>
+              </div>
+              <div class="editor-card wide-function-card">
+                <div class="editor-title">is_viable_d_final</div>
+                <textarea id="advanced-is-viable-d-final" class="code-input advanced-code-input" rows="10">def is_viable_d_final(D):
+    if not D["has_trail"]:
+        return False
+    if D["last_domestic_day"] is None or D["foreign_day"] is None:
+        return True
+    return abs(D["last_domestic_day"] - D["foreign_day"]) <= 3</textarea>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel sql-panel hidden">
+          <div class="panel-heading">
+            <div>
+              <p class="section-kicker">Execution</p>
+              <h2>DuckDB Mapping Preview</h2>
+            </div>
+            <span class="badge">SQL + UDF scaffolding</span>
+          </div>
+          <pre><code>WITH RECURSIVE Paths AS (
+  SELECT
+    start_id AS v,
+    0 AS depth,
+    'q0' AS q,
+    init() AS d
+  UNION ALL
+  SELECT
+    e.dst AS v,
+    p.depth + 1 AS depth,
+    t.next_q AS q,
+    update_d(p.d, p.q, t.next_q, edge_struct(e)) AS d
+  FROM Paths p
+  JOIN nfa_transitions t ON p.q = t.q
+  JOIN edges e ON e.src = p.v AND e.label = t.label
+  WHERE p.depth &lt;= $upper_bound
+    AND is_viable_d(p.d, p.q, t.next_q, edge_struct(e))
+)
+SELECT *
+FROM Paths
+WHERE depth BETWEEN $lower_bound AND $upper_bound
+  AND q IN ('qF')
+  AND is_viable_d_final(finalize(d));</code></pre>
+        </section>
+
+        <section class="panel drawer-panel collapsed" id="data-drawer">
+          <div class="panel-heading">
+            <div>
+              <p class="section-kicker">Data</p>
+              <h2>Default Dataset Preview</h2>
+            </div>
+            <button class="ghost-button" id="toggle-data">Reveal dataset sample</button>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead id="dataset-head"></thead>
+              <tbody id="dataset-body"></tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.27.2/full/pyodide.js"></script>
+    <script src="./script.js?v=20260414b"></script>
+    <script>
+      window.__buildInfo = "Build 2026-04-14-2";
+      window.__runRecapFallback = async function () {
+        const resultBox = document.getElementById("recap-result");
+        const runButton = document.getElementById("run-recap");
+        const runStatus = document.getElementById("run-status");
+        const runStatusText = document.getElementById("run-status-text");
+        const activeMode = document.querySelector(".mode-toggle.active");
+        const payload = {
+          mode: activeMode ? activeMode.dataset.mode : "naive",
+          regex: document.getElementById("regex-input")?.value || "",
+          startNode: document.getElementById("start-node")?.value || "",
+          lowerBound: document.getElementById("lower-bound")?.value || "",
+          upperBound: document.getElementById("upper-bound")?.value || "",
+          naiveCode: document.getElementById("python-editor")?.value || "",
+          advancedCode: {
+            init_d: document.getElementById("advanced-init-d")?.value || "",
+            update_d: document.getElementById("advanced-update-d")?.value || "",
+            is_viable_d: document.getElementById("advanced-is-viable-d")?.value || "",
+            finalize_d: document.getElementById("advanced-finalize-d")?.value || "",
+            is_viable_d_final: document.getElementById("advanced-is-viable-d-final")?.value || "",
+          },
+        };
+
+        try {
+          runStatus.classList.remove("hidden");
+          runStatusText.textContent = "Executing ReCAP...";
+          runButton.disabled = true;
+          const response = await fetch("/api/run-recap", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          const json = await response.json();
+          if (!response.ok) {
+            throw new Error(json.error || json.message || "Run failed");
+          }
+          resultBox.textContent = json.message || "ReCAP run finished.";
+        } catch (error) {
+          resultBox.textContent = "Run failed: " + error.message;
+        } finally {
+          runStatus.classList.add("hidden");
+          runButton.disabled = false;
+        }
+      };
+    </script>
+  </body>
+</html>

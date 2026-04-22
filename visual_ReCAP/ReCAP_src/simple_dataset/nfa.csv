@@ -1,0 +1,3 @@
+from_state,to_state,label
+0,1,purchase
+1,1,purchase
