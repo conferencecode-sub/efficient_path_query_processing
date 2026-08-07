@@ -10,7 +10,7 @@ The ReCAP compiler takes a path query — a label regex plus a selective aggrega
 
 This specification exists to close the gap the Round-2 reviews identified. R2 read the artifact as a "hard-coded prototype" that bakes in the four benchmark queries (R2.O1) and questioned whether the approach is genuinely automatable (R2.O3, R5.O3). The meta-review's crux (3) is "how versatile the compiler is to generate the approach automatically across many query shapes." The requirements below define a general, query-agnostic compiler whose behaviour is fully determined by its inputs, so that the generality claimed in the paper (Theorem 5.1, Listing 3) is realized in the artifact rather than asserted. A traceability matrix (Section 11) maps each requirement to the reviewer concern it serves.
 
-**In scope:** ingestion of arbitrary graph data; full regex support via Thompson's construction; generation of the standard ReCAP SQL (Listing 3); the optimization layer (dictionary flattening and function inlining, Section 6, previously "left for future work"); execution and result/telemetry reporting; a proof-of-concept negative-stability verifier (Section 5.H).
+**In scope:** ingestion of arbitrary graph data; full regex support via Thompson's construction; generation of the standard ReCAP SQL (Listing 3); the optimization layer (dictionary flattening and function inlining, Section 6, previously "left for future work"); execution and result/telemetry reporting. A proof-of-concept negative-stability verifier is retained as a **stretch objective** (Section 13) rather than a committed requirement for this revision.
 
 **Out of scope (Section 12):** automatic synthesis of selective aggregates from a raw declarative predicate; automatic detection of negative stability from an arbitrary user predicate; cost-based or wavefront path planning. These are named explicitly as non-goals to bound the revision.
 
@@ -28,7 +28,7 @@ Terms follow the paper. **Selective aggregate**: the tuple `(D, init_d, update_d
 - **Data provider** — supplies the graph as CSV (or an existing DuckDB table).
 - **System** — the compiler and its execution/telemetry harness.
 
-The compiler operates in **default** or **early-filtering** mode (FR-20). An optional **negative-stability check** (FR-30..FR-33) may be invoked before code generation.
+The compiler operates in **default** or **early-filtering** mode (FR-20). A negative-stability check is described as a stretch objective (Section 13, FR-27..FR-31) and is not part of the committed pipeline for this revision.
 
 ---
 
@@ -43,10 +43,10 @@ Regex ──────────►┌────────────�
                  │  frontend   │   └───────────────────┘
                  │ (Thompson's)│
                  └─────────────┘
-Selective   ────►┌─────────────┐        ┌──────────────────────┐
-aggregate (SQL)  │ D. Sel-agg  │───────►│ (optional) H. Neg-    │
-+ params         │  frontend + │        │  stability verifier   │
-                 │  skeleton   │        └──────────────────────┘
+Selective   ────►┌─────────────┐
+aggregate (SQL)  │ D. Sel-agg  │
++ params         │  frontend + │
+                 │  skeleton   │
                  └─────────────┘
                         │
                         ▼
@@ -57,7 +57,7 @@ aggregate (SQL)  │ D. Sel-agg  │───────►│ (optional) H. Ne
                  └─────────────┘   └──────────────┘
 ```
 
-Every stage's output is inspectable; the generated SQL is a first-class artifact (FR-25), which is the concrete rebuttal to R2.O1.
+Every stage's output is inspectable; the generated SQL is a first-class artifact (FR-25), which is the concrete rebuttal to R2.O1. A negative-stability verifier (Section 13, FR-27..FR-31) is an optional stretch stage that could sit between D and E; it is not part of the committed pipeline for this revision.
 
 ---
 
@@ -139,23 +139,9 @@ Every stage's output is inspectable; the generated SQL is a first-class artifact
 
 > *Mechanization:* telemetry is available from DuckDB's `EXPLAIN ANALYZE` and profiling pragmas; no custom instrumentation of the engine is required (consistent with "we did not extend DuckDB").
 
-### H. Negative-stability verifier (proof-of-concept module)
-
-**FR-27.** Given a selective aggregate expressed as a state transformer — state `S`, update `u = update_d`, viability predicate `ok = is_viable_d`/`is_viable_d_final` — the system shall attempt to prove the single-step obligation: for all states `s ∈ S` and all candidate edges `e`, `¬ok(s) ⟹ ¬ok(u(s, e))`. A proof of this obligation establishes negative stability (prefix-closure of the satisfying set) without induction over path length, because the state summarizes every prefix.
-
-**FR-28.** The verifier shall discharge the obligation by asking an SMT solver for the **negation** (`∃ s, e : ok is currently false but becomes true after update`) and interpreting `unsat` as *proved negatively stable* and `sat` as a *candidate counterexample* with a concrete witness.
-
-**FR-29.** For a non-factorized aggregate the obligation shall be checked **per NFA transition** `(q, q')`, ranging over the finite transition set, so quantification stays over data values only.
-
-**FR-30.** The verifier shall return exactly one of: `PROVED` (sound: the constraint is negatively stable), `COUNTEREXAMPLE` (a state/edge witness was found — see the soundness caveat in Section 9), or `UNKNOWN` (solver timeout or a construct outside the supported theories).
-
-**FR-31.** In the workbench, a "check negative stability" action shall run the verifier over the current selective aggregate and surface the result and any witness next to the relevant transition.
-
-> *Mechanization:* Z3 via its Python API. Theory selection by property type: LIA/LRA/LIRA for numeric amounts and timestamps; the array or finite-set fragment for `edge_ids` membership (trail); sequence/datatype theory only if list-shaped state is retained rather than flattened. Invariant inference (Problem B) would use CHC/Spacer or an inductive prover; that is **out of scope** here (Section 12).
-
 ### I. Workbench orchestration
 
-**FR-32.** The workbench shall drive the pipeline end to end: select data and start vertices → enter regex → system generates NFA and skeleton → author edits skeleton (or picks a library aggregate) → optional negative-stability check → system generates and runs optimized SQL → results and telemetry displayed. This is revision item 6.
+**FR-32.** The workbench shall drive the pipeline end to end: select data and start vertices → enter regex → system generates NFA and skeleton → author edits skeleton (or picks a library aggregate) → system generates and runs optimized SQL → results and telemetry displayed. (A negative-stability check may be added as a stretch step per Section 13.) This is revision item 6.
 
 **FR-33.** The workbench shall not hard-code any dataset, query, or example. A bundled sample dataset and example query may exist as defaults, but every input shall be replaceable through the UI without code changes. This is the direct structural answer to R2.O1.
 
@@ -182,7 +168,8 @@ Every stage's output is inspectable; the generated SQL is a first-class artifact
 - Result set in the chosen shape (paths | endpoints | count).
 - Generated SQL (standard and optimized) as text.
 - Telemetry record: `{intermediate_paths, runtime_ms, peak_mem}`.
-- Verifier verdict (if invoked): `{status ∈ {PROVED, COUNTEREXAMPLE, UNKNOWN}, witness?}`.
+
+*(Stretch, if Section 13 is pursued: verifier verdict `{status ∈ {PROVED, COUNTEREXAMPLE, UNKNOWN}, witness?}`.)*
 
 ---
 
@@ -198,7 +185,8 @@ Every failure shall be reported with a category, the offending input location, a
 | **E-TYPE** | viability predicate not Boolean; update returns wrong shape | D / E | reject naming the function and expected type |
 | **E-UNSUPPORTED** | function outside the inlinable sublanguage | F. Optimizer | warn + fall back to UDF (FR-23), continue |
 | **E-EXEC** | DuckDB runtime error; length bound causes resource exhaustion | G. Execution | report engine message, mapped to a friendly cause; preserve generated SQL |
-| **V-UNKNOWN** | solver timeout or unsupported theory | H. Verifier | return `UNKNOWN`, never a false `PROVED` |
+
+*(Stretch, if Section 13 is pursued: a `V-UNKNOWN` class — solver timeout or unsupported theory — detected at the verifier stage, returning `UNKNOWN` and never a false `PROVED`.)*
 
 ---
 
@@ -213,9 +201,8 @@ Every failure shall be reported with a category, the offending input location, a
 | Standard ReCAP SQL emission | **Partly** (template is the contribution) | templating; `sqlglot` for well-formedness checks |
 | Dictionary flattening + function inlining | **Yes** (Section 6) | `sqlglot`/`libpg_query` for the rewrite plumbing; logic is custom |
 | Execution + telemetry | No | DuckDB engine + `EXPLAIN ANALYZE` |
-| Negative-stability check | **Yes** (PoC) | Z3 (Python API); theories per property type |
 
-The compiler's genuine contributions are the SQL template (E), the two optimization rewrites (F), and — as a proof of concept — the verifier (H). Everything else is deliberately delegated to standard components, which is a point worth stating plainly in the paper: the artifact is thin around a small, well-defined novel core, not a pile of query-specific scripts.
+The compiler's genuine contributions are the SQL template (E) and the two optimization rewrites (F). Everything else is deliberately delegated to standard components, which is a point worth stating plainly in the paper: the artifact is thin around a small, well-defined novel core, not a pile of query-specific scripts. (A negative-stability check, Section 13, would add a further proof-of-concept contribution — Z3 via its Python API, theories per property type — if pursued as a stretch objective.)
 
 ---
 
@@ -225,9 +212,7 @@ The compiler's genuine contributions are the SQL template (E), the two optimizat
 
 **NFR-2 (optimization soundness).** Flattening and inlining (FR-19..FR-22) shall preserve the result set of the standard query. This should be argued in the paper and spot-checked in the artifact by comparing standard vs optimized output on every benchmark configuration.
 
-**NFR-3 (verifier soundness, stated precisely).** `PROVED` is sound: an `unsat` result establishes negative stability. `COUNTEREXAMPLE` is a witness over *all* states, including states that may be unreachable in a real path exploration; it therefore means "not provable negatively stable by the single-step method," not necessarily "observably non-stable at runtime." This caveat shall be documented so no reviewer can read a false claim of completeness into it.
-
-**NFR-4 (adequacy obligation, acknowledged).** The verifier assumes the incremental triple `(S, u, ok)` faithfully computes the author's declarative predicate `φ` (i.e. `ok(fold(u, s0, xs)) = φ(xs)` for all lists). Discharging adequacy is an induction over lists and is **not** attempted by the PoC; it is stated as an assumption and flagged as future work. Naming this pre-empts the obvious "you only proved self-consistency of the incremental form" objection.
+*(NFR-3 and NFR-4, concerning verifier soundness and its adequacy obligation, are deferred with the verifier to Section 13 — they apply only if that stretch objective is pursued.)*
 
 **NFR-5 (no engine modification).** The system shall run on a stock DuckDB build. This is a hard requirement, both technically and rhetorically, given R2.O1.
 
@@ -240,9 +225,8 @@ To make the contracts concrete, the spec shall be exercised end-to-end on Q_B:
 - **aggregate**: non-factorized; `D = {last_time, edge_ids}`; `is_viable_d` differs on the `2→2` (±2 days) vs `2→3` (±3 days) transitions; trail via `edge_ids`.
 - **skeleton**: `CASE` over the three transition pairs, author fills the two range bodies.
 - **generation**: standard SQL (Listing 3 form) → flattened (`last_time` typed, `edge_ids` array) → inlined (`CASE` retained for `is_viable_d`, dropped for `update_d`), matching Figure 7.
-- **verifier**: the monotonicity and trail sub-constraints return `PROVED`; a synthetic lower-bound variant returns `COUNTEREXAMPLE` with a witness, reproducing the paper's claim that lower bounds are not negatively stable.
 
-A passing run of this instantiation is the acceptance test for the compiler as a whole.
+A passing run of stages A–G on this instantiation is the acceptance test for the compiler as a whole. *(Stretch, if Section 13 is pursued: the verifier should return `PROVED` for the monotonicity and trail sub-constraints, and `COUNTEREXAMPLE` with a witness for a synthetic lower-bound variant, reproducing the paper's claim that lower bounds are not negatively stable.)*
 
 ---
 
@@ -251,7 +235,6 @@ A passing run of this instantiation is the acceptance test for the compiler as a
 | Requirement(s) | Serves |
 |---|---|
 | FR-32, FR-33, FR-25 | R2.O1 (artifact is a general compiler, not hard-coded; architecture explicit) |
-| FR-27..FR-31, NFR-3, NFR-4 | R2.O3 / R5.O3 (how negative stability could be identified; automation boundary) |
 | FR-5..FR-8 | R3, R5 (full regex / Thompson's; removes the artifact's "simple regex only" limitation) |
 | FR-16 | R4.O3 (fixes the malformed base case in Listings 1–2) |
 | FR-7, and preserving the NFA | R4.O2 (compatibility with wavefront/segment planners) |
@@ -259,14 +242,41 @@ A passing run of this instantiation is the acceptance test for the compiler as a
 | FR-4, FR-1 | R3.O2 (start-vertex methodology; larger-graph runs) |
 | FR-13, FR-12 | R4.O1 (abstraction/library benefit over hand-inlined CTEs) |
 | Section 8 map | meta-crux (3) (compiler versatility across query shapes) |
+| Section 13 (stretch, if pursued) | R2.O3 / R5.O3 (how negative stability could be identified; automation boundary) — only partially served even if implemented, since it checks a supplied encoding rather than discovering one |
 
 ---
 
 ## 12. Explicit non-goals (scope boundary for this revision)
 
 1. **Synthesis of a selective aggregate from a raw declarative predicate** (Problem B). The compiler consumes a selective aggregate; it does not invent one from `list_max(amounts) - list_min(amounts) <= U`.
-2. **Automatic detection of negative stability from an arbitrary user predicate.** The verifier checks a *supplied* incremental encoding (Problem A); it does not search for one. General detection is acknowledged as an open problem.
+2. **Automatic detection of negative stability from an arbitrary user predicate.** General detection is acknowledged as an open problem. The stretch objective in Section 13, if pursued, only checks a *supplied* incremental encoding (Problem A); it does not search for one.
 3. **Cost-based, wavefront, or segment-based path planning.** The compiler targets the standard bottom-up recursive evaluation; it is designed to remain *compatible* with richer planners (FR-7) but does not implement them.
-4. **Discharging the adequacy obligation (NFR-4).**
+4. **Discharging the adequacy obligation (NFR-4, Section 13).**
 
 Stating these keeps the revision's committed surface exactly equal to what the AE endorsed, and reserves 1–2 as the spine of follow-on work rather than giving it away here.
+
+---
+
+## 13. Stretch objectives (not committed for this revision)
+
+The items below describe a proof-of-concept negative-stability verifier. They are **not required** for this revision to be considered complete — Sections 1, 3, and 4 describe the committed pipeline without it. They are kept here, rather than deleted, because they sketch a partial, honest answer to R2.O3/R5.O3 ("how would a system identify negatively stable constraints?") that could be picked up if time permits. Nothing in Sections 1–12 depends on this section being implemented.
+
+### H. Negative-stability verifier (proof-of-concept module)
+
+**FR-27.** Given a selective aggregate expressed as a state transformer — state `S`, update `u = update_d`, viability predicate `ok = is_viable_d`/`is_viable_d_final` — the system shall attempt to prove the single-step obligation: for all states `s ∈ S` and all candidate edges `e`, `¬ok(s) ⟹ ¬ok(u(s, e))`. A proof of this obligation establishes negative stability (prefix-closure of the satisfying set) without induction over path length, because the state summarizes every prefix.
+
+**FR-28.** The verifier shall discharge the obligation by asking an SMT solver for the **negation** (`∃ s, e : ok is currently false but becomes true after update`) and interpreting `unsat` as *proved negatively stable* and `sat` as a *candidate counterexample* with a concrete witness.
+
+**FR-29.** For a non-factorized aggregate the obligation shall be checked **per NFA transition** `(q, q')`, ranging over the finite transition set, so quantification stays over data values only.
+
+**FR-30.** The verifier shall return exactly one of: `PROVED` (sound: the constraint is negatively stable), `COUNTEREXAMPLE` (a state/edge witness was found — see the soundness caveat below), or `UNKNOWN` (solver timeout or a construct outside the supported theories).
+
+**FR-31.** In the workbench, a "check negative stability" action shall run the verifier over the current selective aggregate and surface the result and any witness next to the relevant transition.
+
+> *Mechanization:* Z3 via its Python API. Theory selection by property type: LIA/LRA/LIRA for numeric amounts and timestamps; the array or finite-set fragment for `edge_ids` membership (trail); sequence/datatype theory only if list-shaped state is retained rather than flattened. Invariant inference (Problem B) would use CHC/Spacer or an inductive prover; that remains out of scope even if this stretch objective is pursued (Section 12).
+
+**NFR-3 (verifier soundness, stated precisely).** `PROVED` is sound: an `unsat` result establishes negative stability. `COUNTEREXAMPLE` is a witness over *all* states, including states that may be unreachable in a real path exploration; it therefore means "not provable negatively stable by the single-step method," not necessarily "observably non-stable at runtime." This caveat shall be documented so no reviewer can read a false claim of completeness into it.
+
+**NFR-4 (adequacy obligation, acknowledged).** The verifier assumes the incremental triple `(S, u, ok)` faithfully computes the author's declarative predicate `φ` (i.e. `ok(fold(u, s0, xs)) = φ(xs)` for all lists). Discharging adequacy is an induction over lists and is **not** attempted by the PoC; it is stated as an assumption and flagged as future work. Naming this pre-empts the obvious "you only proved self-consistency of the incremental form" objection.
+
+**Traceability, if pursued:** this offers a partial, PoC-level answer to R2.O3 and R5.O3. It checks a *supplied* incremental encoding rather than searching for one, so it does not fully resolve the reviewers' concern, but it would materially strengthen the honesty of the revision's automation story.
