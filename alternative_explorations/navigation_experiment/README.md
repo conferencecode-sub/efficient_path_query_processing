@@ -28,8 +28,17 @@ restrict to one (see "Scaling to deeper paths" below).
   rows; F2 (states `{1,2}`) is seeded directly from F1's boundary rows and
   continues to the accepting state. Reports F1/F2 timing and seam-row count
   separately.
-- `check_equivalence.py` — runs both over the same data/window and diffs the
-  result sets with SQL `EXCEPT` in both directions.
+- `naive_split.py` — plan (ii): F1 is unchanged, but F2 (states `{1,2}`) explores
+  independently from *every* vertex, unseeded, remembering only its own
+  first/last vertex and first/last timestamp. The cross-fragment monotonicity
+  check (`F1.last_time < F2.first_time`) is enforced once, as a final join
+  predicate, instead of inline on every hop. Reports F1/F2/join timing plus the
+  size of F2's unseeded intermediate, to isolate how much seam-level filtering
+  in the seeded version actually saves.
+- `check_equivalence.py` — runs all three plans over the same data/window and
+  diffs the result sets against the baseline with SQL `EXCEPT ALL` (bag
+  semantics; see the comment in the script for why plain `EXCEPT` would
+  silently hide a mismatch here).
 
 ## Running
 
@@ -40,10 +49,13 @@ From this directory (paths default to `ReCAP/simple_dataset/LG_V.csv` /
 # Baseline only (typical left-to-right)
 python3 baseline_monolithic.py --min-length 2 --max-length 6
 
-# Split + merge only
+# Seeded split + merge only
 python3 seeded_split.py --min-length 2 --max-length 6
 
-# Both, plus the equivalence check -- this is the actual experiment
+# Naive split + final join only
+python3 naive_split.py --min-length 2 --max-length 6
+
+# All three, plus the equivalence checks -- this is the actual experiment
 python3 check_equivalence.py --min-length 2 --max-length 6
 ```
 
@@ -68,16 +80,25 @@ runs noticeably faster than the monolithic baseline once paths get long):
 
 ```bash
 python3 check_equivalence.py --min-length 2 --max-length 6 --start-vertex 383
-# baseline (monolithic):  10577068 paths in ~26s
-# seeded split + merge:   10577068 paths in ~5.5s (F1 seam rows: 13416055)
-# MATCH: result sets are identical.
+# baseline (monolithic):  10577068 paths in ~24s
+# seeded split + merge:   10577068 paths in ~5.2s (F1 seam rows: 13416055)
+# naive split + join:     10577068 paths in ~3.5s (F1 seam rows: 13416055, F2 unseeded suffix rows: 107540)
+# MATCH (baseline vs. seeded split): result sets are identical.
+# MATCH (baseline vs. naive split): result sets are identical.
 ```
+
+Note the naive split actually beats the seeded split here, which is worth
+stating honestly rather than assuming seam-inline filtering always wins: with
+a single start vertex, F1's boundary set is huge (13.4M walks, many reaching
+the same seam vertices at different prefix lengths/times), so seeded split's
+F2 re-runs essentially the same `{1,2}` expansion once per boundary row.
+Naive split's F2 instead expands once per *distinct* vertex (1,320 roots,
+producing only 107K suffix rows) and defers the monotonicity check to a single
+final join. Which plan wins depends on the ratio of boundary rows to distinct
+seam vertices, not on seam-filtering being universally better or worse.
 
 ## Not covered here
 
-- Plan (ii), the "naive"/unseeded split that isolates how much the seam filter
-  in F2 actually prunes vs. filtering only at the very end. Left out to keep
-  this first cut minimal; would be a `naive_split.py` sibling if pursued next.
 - Phase 2 (genuine directional reversal: point-to-point query, reversed-edge
   fragment, real two-sided merge) — see section 4 of
   `navigation_style_experiment.md`. Deliberately out of scope for this cut.
