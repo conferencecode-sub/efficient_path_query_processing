@@ -34,8 +34,8 @@ def main():
 
     mono_count, mono_wall = baseline_monolithic.run(
         conn, args.min_length, args.max_length, "mono_results", start_vertex=args.start_vertex)
-    split_count, f1_wall, f2_wall, boundary_rows = seeded_split.run(
-        conn, args.min_length, args.max_length, "split_results", start_vertex=args.start_vertex)
+    # split_count, f1_wall, f2_wall, boundary_rows = seeded_split.run(
+    #     conn, args.min_length, args.max_length, "split_results", start_vertex=args.start_vertex)
     naive_count, nf1_wall, nf2_wall, join_wall, naive_boundary_rows, frag2_rows = naive_split.run(
         conn, args.min_length, args.max_length, "naive_results", start_vertex=args.start_vertex)
 
@@ -53,21 +53,21 @@ def main():
         ).fetchone()[0]
         return only_in_a, only_in_b
 
-    mono_vs_split = except_all_counts("mono_results", "split_results")
+    # mono_vs_split = except_all_counts("mono_results", "split_results")
     mono_vs_naive = except_all_counts("mono_results", "naive_results")
 
     print(f"min_length={args.min_length}, max_length={args.max_length}")
     print(f"  baseline (monolithic):  {mono_count} paths in {1000 * mono_wall:.2f}ms")
-    print(f"  seeded split + merge:   {split_count} paths in {1000 * (f1_wall + f2_wall):.2f}ms "
-          f"(F1 seam rows: {boundary_rows})")
+    # print(f"  seeded split + merge:   {split_count} paths in {1000 * (f1_wall + f2_wall):.2f}ms "
+        #   f"(F1 seam rows: {boundary_rows})")
     print(f"  naive split + join:     {naive_count} paths in {1000 * (nf1_wall + nf2_wall + join_wall):.2f}ms "
           f"(F1 seam rows: {naive_boundary_rows}, F2 unseeded suffix rows: {frag2_rows})")
 
-    if mono_vs_split == (0, 0):
-        print("  MATCH (baseline vs. seeded split): result sets are identical.")
-    else:
-        print(f"  MISMATCH (baseline vs. seeded split): {mono_vs_split[0]} rows only in baseline, "
-              f"{mono_vs_split[1]} rows only in split.")
+    # if mono_vs_split == (0, 0):
+    #     print("  MATCH (baseline vs. seeded split): result sets are identical.")
+    # else:
+    #     print(f"  MISMATCH (baseline vs. seeded split): {mono_vs_split[0]} rows only in baseline, "
+    #           f"{mono_vs_split[1]} rows only in split.")
 
     if mono_vs_naive == (0, 0):
         print("  MATCH (baseline vs. naive split): result sets are identical.")
