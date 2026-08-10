@@ -10,9 +10,14 @@ optimized recursive SQL that early-filters "doomed" paths during exploration.
 - **`compiler/`** -- the compiler implementation, built against the spec
   below. Start here: `compiler/README.md` (setup + layout) and
   `compiler/CHECKLIST.md` (build progress, one row per pipeline stage).
-- **`requirements/compiler_reqs.md`** -- the functional requirements spec the
-  compiler is built against; each requirement traces to the reviewer concern
-  it answers (Section 11).
+- **`new_compiler_requirements/compiler_reqs.md`** -- the functional
+  requirements spec the compiler is built against; each requirement traces
+  to the reviewer concern it answers (Section 11). (This folder was
+  `requirements/` until 2026-08-07.) The same folder also has
+  `recap_compiler_requirements_FULL.md`, a newer draft with two differences:
+  it un-demotes the negative-stability verifier (Module H) back into the
+  main spec, and it adds an all-new optional Part II (Module J: LLM-assisted
+  selective-aggregate authoring) -- not yet reconciled with `compiler_reqs.md`.
 - **`info_background/`** -- the paper (`Efficient_Path_Query_Processing_RelDBMS-2.pdf`)
   and the Round-2 reviews + author feedback (`new_reviews.pdf`).
 - **`old_requirements/README.md`** -- the old prototype's README (browser UI +
@@ -35,5 +40,7 @@ pip install -e '.[dev]'
 python3 -m pytest tests/ -v
 ```
 
-See `compiler/README.md` for layout details and `compiler/CHECKLIST.md` for
-what's implemented so far vs. planned next.
+To see it running instead of just tests passing, either run
+`python3 demo_pipeline.py` (script), or `pip install -e '.[ui]' && streamlit
+run webapp/app.py` (browser UI). See `compiler/README.md` for both, and
+`compiler/CHECKLIST.md` for what's implemented so far vs. planned next.

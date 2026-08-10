@@ -15,6 +15,7 @@ from .errors import IngestionError
 
 REQUIRED_EDGE_COLUMNS = {"src", "dst", "label"}
 REQUIRED_VERTEX_COLUMN = "id"
+EDGE_ID_COLUMN = "edge_id"  # matches selective_aggregate.trail_via_edge_ids's default id_column
 
 _DEGREE_BAND_CONDITIONS = {
     "low": "d.out_degree < b.q25",
@@ -68,6 +69,20 @@ def _load_relation(conn: duckdb.DuckDBPyConnection, source: str, table_name: str
         conn.execute(f'ALTER TABLE {table_name} ALTER COLUMN "{column}" TYPE {new_type}')
 
 
+def _ensure_edge_id(conn: duckdb.DuckDBPyConnection, table_name: str = "edges") -> None:
+    """Not every edges source has its own unique id column, but FR-13(ii)'s
+    trail semantics (no repeated edge) need one to detect repeats. Adds a
+    synthetic `edge_id` (row position, 0-based) if the loaded data doesn't
+    already have one -- a no-op when it does, so a real id column is never
+    overwritten."""
+    columns = {row[0] for row in conn.execute(f"DESCRIBE {table_name}").fetchall()}
+    if EDGE_ID_COLUMN not in columns:
+        conn.execute(
+            f"CREATE OR REPLACE TABLE {table_name} AS "
+            f"SELECT row_number() OVER () - 1 AS {EDGE_ID_COLUMN}, * FROM {table_name}"
+        )
+
+
 def load_graph(conn: duckdb.DuckDBPyConnection, edges_source: str,
                vertices_source: str | None = None,
                edge_type_overrides: dict[str, str] | None = None,
@@ -75,8 +90,11 @@ def load_graph(conn: duckdb.DuckDBPyConnection, edges_source: str,
     """FR-1..FR-3: load edges (required src/dst/label + properties) and,
     optionally, vertices (required id + properties; inferred from edges when
     absent). `edges_source`/`vertices_source` may be a CSV path or the name
-    of a table already registered on `conn`."""
+    of a table already registered on `conn`. Guarantees an `edge_id` column
+    exists on `edges` (FR-13(ii)'s trail semantics need one), synthesizing
+    one from row position if the source didn't already have it."""
     _load_relation(conn, edges_source, "edges", REQUIRED_EDGE_COLUMNS, edge_type_overrides)
+    _ensure_edge_id(conn)
 
     if vertices_source is not None:
         _load_relation(conn, vertices_source, "nodes", {REQUIRED_VERTEX_COLUMN},

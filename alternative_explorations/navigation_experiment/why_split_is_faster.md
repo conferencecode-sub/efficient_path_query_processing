@@ -77,7 +77,7 @@ now doomed" one full hop earlier than the state-blind monolithic query can,
 and at this branching factor, that one hop is where almost all the cost
 lives. This is a length-budget instance of exactly the "prune doomed paths
 early via negatively-stable constraints" idea the ReCAP paper is already
-built around (see `../../requirements/compiler_reqs.md`) — the split
+built around (see `../../new_compiler_requirements/compiler_reqs.md`) — the split
 recovers it "for free" just by giving each fragment a tighter base case, with
 no new machinery required.
 

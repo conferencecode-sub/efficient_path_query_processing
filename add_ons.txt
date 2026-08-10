@@ -1,0 +1,7 @@
+- Compiler: A major critique on the paper is how can automatically generate ReCAPs. I suggest the following: In the interface, the user proposes a query in SQL, and we prompt 
+an LLM produces something the SQL query with the ReCAP with a rationale (and maybe a minimal example). The prompt details are still TBD. 
+If the user believes the semantics are incorrect, the interface can plop the functions for the selective aggregate and the user then can interact with it (and tweak them). 
+
+- Follow up from compiler and feeding the query to the LLM:
+What are the results and new experiments going to look like? Minimal intuition example. Complicated boolean formula like disjunctions can be written in DNF, split into chunks and then UNION them. 
+- How can the user prove negative stability?

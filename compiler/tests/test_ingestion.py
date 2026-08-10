@@ -36,6 +36,20 @@ def test_load_graph_infers_vertices_from_edges(conn, edges_csv):
     assert conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0] == 6
 
 
+def test_load_graph_synthesizes_edge_id_when_source_lacks_one(conn, edges_csv):
+    load_graph(conn, edges_csv)  # edges_csv fixture has no edge_id column of its own
+    edge_ids = [row[0] for row in conn.execute("SELECT edge_id FROM edges ORDER BY edge_id").fetchall()]
+    assert edge_ids == list(range(6))  # unique, 0-based, one per row
+
+
+def test_load_graph_preserves_existing_edge_id(conn, tmp_path):
+    path = tmp_path / "edges_with_id.csv"
+    _write_csv(path, "edge_id,src,dst,label", ["100,1,2,a", "200,2,3,a"])
+    load_graph(conn, str(path))
+    edge_ids = {row[0] for row in conn.execute("SELECT edge_id FROM edges").fetchall()}
+    assert edge_ids == {100, 200}  # real ids kept, not overwritten by synthetic ones
+
+
 def test_load_graph_with_explicit_vertices(conn, edges_csv, tmp_path):
     vertices_path = tmp_path / "nodes.csv"
     _write_csv(vertices_path, "id,region", ["1,east", "2,west", "3,east", "4,west", "5,east"])

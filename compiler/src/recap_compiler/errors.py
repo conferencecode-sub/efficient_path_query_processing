@@ -1,4 +1,4 @@
-"""Error taxonomy (Section 7 of requirements/compiler_reqs.md).
+"""Error taxonomy (Section 7 of new_compiler_requirements/compiler_reqs.md).
 
 Every stage raises one of these instead of letting a raw engine/library
 exception reach the query author. Each carries a `locus` -- the offending

@@ -11,10 +11,12 @@ dependencies = [
     "duckdb",
     "pandas",
     "pyformlang",
+    "sqlglot",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest"]
+ui = ["streamlit"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
