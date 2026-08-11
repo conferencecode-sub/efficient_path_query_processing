@@ -38,8 +38,14 @@ from dataclasses import dataclass
 import sqlglot
 from sqlglot import exp
 
-from .errors import ExecutionError, UnsupportedError
-from .selective_aggregate import DICT_ALIAS, EDGE_ALIAS, SelectiveAggregate, TransitionPair
+from .errors import ExecutionError, RefError, UnsupportedError
+from .selective_aggregate import (
+    DICT_ALIAS,
+    EDGE_ALIAS,
+    SelectiveAggregate,
+    TransitionPair,
+    normalize_update_d_body,
+)
 from .transitions import TransitionsRelation
 
 RECURSIVE_STATE_MAP = {"from_state": "p.q", "to_state": "t.to_state"}
@@ -105,16 +111,27 @@ def _rewrite_sql(body: str, **kwargs) -> str:
 
 
 def _flatten_update_d(aggregate: SelectiveAggregate, *, declared_keys: list[str]) -> dict[str, str]:
-    """Returns one flattened+inlined SQL expression per dictionary key."""
+    """Returns one flattened+inlined SQL expression per dictionary key.
+    `update_d` is normalized first (`normalize_update_d_body`) -- both to
+    its struct-literal-with-every-key-covered form (a key a partial body
+    leaves out flattens to "keep the previous column's value" instead of a
+    `KeyError`) and, if it was written as one or more `D.<key> = <expr>`
+    assignments, into the equivalent struct literal `_decompose_struct`
+    already knows how to handle. The same normalization Stage E applies
+    before pasting into a macro, so the two stages agree (FR-22)."""
     if aggregate.factorized:
-        fields = _decompose_struct(aggregate.update_d)
+        normalized = normalize_update_d_body(aggregate.update_d, declared_keys=declared_keys)
+        fields = _decompose_struct(normalized)
         return {
             key: _rewrite_node(fields[key], path_alias="p", state_map=RECURSIVE_STATE_MAP,
                                 declared_keys=declared_keys).sql(dialect="duckdb")
             for key in declared_keys
         }
 
-    per_pair_fields = {pair: _decompose_struct(body) for pair, body in aggregate.update_d.items()}
+    per_pair_fields = {
+        pair: _decompose_struct(normalize_update_d_body(body, declared_keys=declared_keys))
+        for pair, body in aggregate.update_d.items()
+    }
     result: dict[str, str] = {}
     for key in declared_keys:
         branch_lines = []
@@ -162,6 +179,12 @@ def build_optimized_query(*, aggregate: SelectiveAggregate, relation: Transition
     accepting = ", ".join(str(q) for q in sorted(relation.accepting_states))
 
     init_fields = _decompose_struct(aggregate.init_d) if declared_keys else {}
+    missing_init = [key for key in declared_keys if key not in init_fields]
+    if missing_init:
+        # Unlike update_d, there's no previous value to default a missing
+        # key to at initialization -- this must be a real, reported error,
+        # not a silent default (and not a raw KeyError on first use below).
+        raise RefError(f"init_d does not initialize declared key(s): {missing_init}", locus="init_d")
     anchor_cols = "".join(
         f", ({init_fields[key].sql(dialect='duckdb')}) AS {key}" for key in declared_keys)
 
@@ -176,7 +199,7 @@ def build_optimized_query(*, aggregate: SelectiveAggregate, relation: Transition
                                   state_map={}, declared_keys=declared_keys)
 
     cte = f"""paths AS (
-    SELECT s.v AS v, {relation.q0} AS q{anchor_cols}, 1 AS path_length
+    SELECT s.v AS v, {relation.q0} AS q{anchor_cols}, 0 AS path_length
     FROM (VALUES {seed_values}) AS s(v)
     UNION ALL
     SELECT e.dst AS v, t.to_state AS q{update_cols},

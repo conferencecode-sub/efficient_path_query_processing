@@ -6,7 +6,9 @@ from recap_compiler.selective_aggregate import (
     SelectiveAggregate,
     adjacent_edge_predicate,
     bounded_range,
+    complete_update_d_body,
     generate_skeleton,
+    normalize_update_d_body,
     trail_via_edge_ids,
     validate_selective_aggregate,
 )
@@ -194,3 +196,68 @@ def test_malformed_body_raises_ref_error_not_a_raw_parse_exception():
     )
     with pytest.raises(RefError, match="could not parse"):
         validate_selective_aggregate(agg, edge_columns=EDGE_COLUMNS)
+
+
+# --- complete_update_d_body: a partial struct defaults missing keys to
+# passing their previous value through unchanged (`D.<key>`) -------------
+
+def test_complete_update_d_body_fills_in_the_missing_key():
+    completed = complete_update_d_body(
+        "{max_amount: GREATEST(D.max_amount, e.amount)}", declared_keys=["max_amount", "min_amount"])
+    assert "D.min_amount" in completed
+    assert "GREATEST(D.max_amount, e.amount)" in completed
+
+
+def test_complete_update_d_body_is_a_no_op_when_already_complete():
+    body = "{max_amount: D.max_amount, min_amount: D.min_amount}"
+    assert complete_update_d_body(body, declared_keys=["max_amount", "min_amount"]) == body
+
+
+def test_complete_update_d_body_leaves_a_non_struct_body_unchanged():
+    # bare "D" (pass everything through) isn't a struct literal -- nothing to complete.
+    assert complete_update_d_body("D", declared_keys=["max_amount", "min_amount"]) == "D"
+
+
+def test_complete_update_d_body_is_a_no_op_with_no_declared_keys():
+    assert complete_update_d_body("{x: 1}", declared_keys=[]) == "{x: 1}"
+
+
+# --- normalize_update_d_body: accepts either a struct literal or one or
+# more "D.<key> = <expr>" assignment statements, converting both to the
+# same completed-struct-literal form -------------------------------------
+
+def test_normalize_update_d_body_converts_a_single_assignment():
+    normalized = normalize_update_d_body(
+        "D.max_amount = GREATEST(D.max_amount, e.amount)",
+        declared_keys=["max_amount", "min_amount"])
+    assert "GREATEST(D.max_amount, e.amount)" in normalized
+    assert "D.min_amount" in normalized  # omitted key defaults to pass-through
+
+
+def test_normalize_update_d_body_converts_multiple_semicolon_separated_assignments():
+    normalized = normalize_update_d_body(
+        "D.max_amount = GREATEST(D.max_amount, e.amount); D.min_amount = LEAST(D.min_amount, e.amount)",
+        declared_keys=["max_amount", "min_amount"])
+    assert "GREATEST(D.max_amount, e.amount)" in normalized
+    assert "LEAST(D.min_amount, e.amount)" in normalized
+
+
+def test_normalize_update_d_body_still_handles_a_plain_struct_literal():
+    body = "{max_amount: GREATEST(D.max_amount, e.amount)}"
+    normalized = normalize_update_d_body(body, declared_keys=["max_amount", "min_amount"])
+    assert "D.min_amount" in normalized  # same completion as complete_update_d_body
+
+
+def test_normalize_update_d_body_still_passes_through_bare_D():
+    assert normalize_update_d_body("D", declared_keys=["max_amount"]) == "D"
+
+
+def test_normalize_update_d_body_rejects_assignment_to_undeclared_key():
+    with pytest.raises(RefError, match="undeclared dictionary key 'D.bogus'"):
+        normalize_update_d_body("D.bogus = e.amount", declared_keys=["max_amount"])
+
+
+def test_normalize_update_d_body_rejects_a_non_assignment_statement_among_several():
+    with pytest.raises(RefError, match="expected a struct literal"):
+        normalize_update_d_body(
+            "D.max_amount = e.amount; TRUE", declared_keys=["max_amount", "min_amount"])

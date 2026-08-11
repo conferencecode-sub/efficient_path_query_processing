@@ -2,7 +2,9 @@
 prints every intermediate artifact plus the actual DuckDB results -- both
 the unoptimized (Stage E) and optimized (Stage F) queries, side by side, so
 you can see both that they agree (FR-22) and how much Stage F's flattening
-and inlining actually save.
+and inlining actually save. Also prints a stage-by-stage timing breakdown
+(parsing, loading, SQL generation, execution, ...) so you can see where the
+time actually goes, not just the end-to-end total.
 
 Usage:
     cd compiler
@@ -17,6 +19,7 @@ import duckdb
 from recap_compiler.execution import run_query
 from recap_compiler.ingestion import load_graph, select_start_vertices
 from recap_compiler.optimizer import build_optimized_query
+from recap_compiler.profiling import TimingBreakdown, timed_stage
 from recap_compiler.regex_frontend import compile_regex_to_nfa
 from recap_compiler.selective_aggregate import bounded_range, validate_selective_aggregate
 from recap_compiler.standard_sql import build_standard_query, materialize_transitions, register_aggregate_macros
@@ -25,8 +28,9 @@ from recap_compiler.transitions import build_transitions_relation
 DATASET = os.path.join(os.path.dirname(__file__), "..", "ReCAP", "simple_dataset", "LG.csv")
 REGEX = "(transfer|purchase|sale)+(phishing|scam)+"  # the paper's Q1 query
 START_VERTEX = 383  # matches the fixed starter_node used throughout the earlier navigation experiments
-LENGTH_BOUND = 4    # kept small so the demo finishes in seconds -- see CHECKLIST.md's note on why
-                     # this specific regex/dataset combination blows up fast at depth
+LENGTH_BOUND = 3    # max edges per path (path_length now starts at 0, so this is 1 less than it
+                     # used to be for the same reach) -- kept small so the demo finishes in seconds;
+                     # see CHECKLIST.md for why this regex/dataset combination blows up fast at depth
 
 
 def _section(title: str) -> None:
@@ -34,23 +38,28 @@ def _section(title: str) -> None:
 
 
 def main() -> None:
+    breakdown = TimingBreakdown()
     conn = duckdb.connect()
 
     _section("Stage A: ingestion")
-    handle = load_graph(conn, DATASET)
+    with timed_stage(breakdown, "A: load graph"):
+        handle = load_graph(conn, DATASET)
     edge_columns = {row[0] for row in conn.execute("DESCRIBE edges").fetchall()}
     print(f"loaded {conn.execute('SELECT count(*) FROM edges').fetchone()[0]} edges, "
           f"{conn.execute('SELECT count(*) FROM nodes').fetchone()[0]} vertices")
-    starts = select_start_vertices(handle, ids=[START_VERTEX])
+    with timed_stage(breakdown, "A: select start vertices"):
+        starts = select_start_vertices(handle, ids=[START_VERTEX])
     print(f"start vertex: {starts}")
 
     _section("Stage B: regex -> NFA")
     print(f"regex: {REGEX!r}")
-    nfa = compile_regex_to_nfa(REGEX)
+    with timed_stage(breakdown, "B: regex -> NFA"):
+        nfa = compile_regex_to_nfa(REGEX)
     print(f"{len(nfa.states)} states, {len(nfa.accepting_states)} accepting state(s)")
 
     _section("Stage C: NFA -> transitions relation T(from_state, to_state, label)")
-    relation = build_transitions_relation(nfa)
+    with timed_stage(breakdown, "C: build transitions relation"):
+        relation = build_transitions_relation(nfa)
     print(f"q0 = {relation.q0}, Q_F = {sorted(relation.accepting_states)}, "
           f"{len(relation.rows)} transition rows")
 
@@ -58,25 +67,32 @@ def main() -> None:
     aggregate = bounded_range(property="amount", upper_bound=500.0)
     print("chosen library entry: FR-13(iii) bounded_range(property='amount', upper_bound=500.0)")
     print(f"  is_viable_d = {aggregate.is_viable_d}")
-    validate_selective_aggregate(aggregate, edge_columns=edge_columns)
+    with timed_stage(breakdown, "D: validate aggregate"):
+        validate_selective_aggregate(aggregate, edge_columns=edge_columns)
     print("  FR-14 validation: PASSED")
 
-    register_aggregate_macros(conn, aggregate)
-    materialize_transitions(conn, relation)
+    with timed_stage(breakdown, "E: register aggregate macros"):
+        register_aggregate_macros(conn, aggregate)
+    with timed_stage(breakdown, "C: materialize transitions table"):
+        materialize_transitions(conn, relation)
 
     _section("Stage E: standard ReCAP SQL (functions pasted as DuckDB macros, called by name)")
-    standard_query = build_standard_query(relation=relation, start_vertices=starts,
-                                           length_bound=LENGTH_BOUND)
+    with timed_stage(breakdown, "E: generate standard SQL"):
+        standard_query = build_standard_query(relation=relation, start_vertices=starts,
+                                               length_bound=LENGTH_BOUND)
     print(standard_query.sql)
 
     _section("Stage F: optimized SQL (dictionary flattened to columns, macro calls inlined)")
-    optimized_query = build_optimized_query(aggregate=aggregate, relation=relation,
-                                              start_vertices=starts, length_bound=LENGTH_BOUND)
+    with timed_stage(breakdown, "F: generate optimized SQL"):
+        optimized_query = build_optimized_query(aggregate=aggregate, relation=relation,
+                                                  start_vertices=starts, length_bound=LENGTH_BOUND)
     print(optimized_query.sql)
 
     _section(f"Stage G: execution (length_bound={LENGTH_BOUND}) -- standard vs. optimized")
-    standard_result = run_query(conn, standard_query, result_shape="paths")
-    optimized_result = run_query(conn, optimized_query, result_shape="paths")
+    with timed_stage(breakdown, "G: execute standard query"):
+        standard_result = run_query(conn, standard_query, result_shape="paths")
+    with timed_stage(breakdown, "G: execute optimized query"):
+        optimized_result = run_query(conn, optimized_query, result_shape="paths")
 
     standard_signature = {(v, q, path_length) for v, q, _d, path_length, _r in standard_result.rows}
     optimized_signature = {(v, q, path_length) for v, q, _d, path_length, _r in optimized_result.rows}
@@ -93,6 +109,13 @@ def main() -> None:
     print(f"speedup: {speedup:.2f}x")
 
     print(f"\nsample optimized result row: {optimized_result.rows[0]}")
+
+    _section("Timing breakdown")
+    for row in breakdown.as_rows():
+        print(f"{row['stage']:<32} {row['ms']:>9.2f} ms  ({row['% of total']:5.1f}%)")
+    print(f"{'TOTAL':<32} {breakdown.total_ms:>9.2f} ms")
+    print("\n(most of this is the two query executions -- compiling the query itself "
+          "is comparatively instant; that contrast is itself worth pointing out.)")
 
 
 if __name__ == "__main__":

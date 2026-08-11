@@ -22,7 +22,7 @@ from dataclasses import dataclass
 import duckdb
 
 from .errors import ExecutionError
-from .selective_aggregate import DICT_ALIAS, EDGE_ALIAS, SelectiveAggregate, TransitionPair
+from .selective_aggregate import DICT_ALIAS, EDGE_ALIAS, SelectiveAggregate, TransitionPair, normalize_update_d_body
 from .transitions import TransitionsRelation, to_dataframe
 
 MACRO_SIGNATURES = {
@@ -56,16 +56,31 @@ def _case_expression(bodies: dict[TransitionPair, str], *, default: str) -> str:
 
 def register_aggregate_macros(conn: duckdb.DuckDBPyConnection, aggregate: SelectiveAggregate) -> None:
     """Pastes each of the five (already FR-14-validated) function bodies
-    into a `CREATE OR REPLACE MACRO`, exactly as authored."""
+    into a `CREATE OR REPLACE MACRO`, exactly as authored -- except
+    `update_d`, which is normalized first (`normalize_update_d_body`): a
+    key its body leaves out defaults to passing its previous value through
+    unchanged rather than silently dropping it from `D`, and its
+    `D.<key> = <expr>` assignment-statement form (invalid as a standalone
+    macro body) is converted into an equivalent struct literal (valid)."""
+    declared_keys = [key.name for key in aggregate.dictionary_keys]
+
     conn.execute(f"CREATE OR REPLACE MACRO init_d() AS ({aggregate.init_d})")
     conn.execute(f"CREATE OR REPLACE MACRO is_viable_d_final(D) AS ({aggregate.is_viable_d_final})")
     conn.execute(f"CREATE OR REPLACE MACRO finalize_d(D) AS ({aggregate.finalize_d})")
 
-    for name, body, default in (("update_d", aggregate.update_d, "D"),
-                                 ("is_viable_d", aggregate.is_viable_d, "TRUE")):
-        params = ", ".join(MACRO_SIGNATURES[name])
-        expr = body if aggregate.factorized else _case_expression(body, default=default)
-        conn.execute(f"CREATE OR REPLACE MACRO {name}({params}) AS ({expr})")
+    if aggregate.factorized:
+        update_expr = normalize_update_d_body(aggregate.update_d, declared_keys=declared_keys)
+    else:
+        normalized_pairs = {pair: normalize_update_d_body(body, declared_keys=declared_keys)
+                             for pair, body in aggregate.update_d.items()}
+        update_expr = _case_expression(normalized_pairs, default="D")
+    conn.execute(
+        f"CREATE OR REPLACE MACRO update_d({', '.join(MACRO_SIGNATURES['update_d'])}) AS ({update_expr})")
+
+    is_viable_expr = (aggregate.is_viable_d if aggregate.factorized
+                       else _case_expression(aggregate.is_viable_d, default="TRUE"))
+    conn.execute(
+        f"CREATE OR REPLACE MACRO is_viable_d({', '.join(MACRO_SIGNATURES['is_viable_d'])}) AS ({is_viable_expr})")
 
 
 def materialize_transitions(conn: duckdb.DuckDBPyConnection, relation: TransitionsRelation,
@@ -100,7 +115,7 @@ def build_standard_query(*, relation: TransitionsRelation, start_vertices: list[
     accepting = ", ".join(str(q) for q in sorted(relation.accepting_states))
 
     cte = f"""paths AS (
-    SELECT s.v AS v, {relation.q0} AS q, init_d() AS D, 1 AS path_length
+    SELECT s.v AS v, {relation.q0} AS q, init_d() AS D, 0 AS path_length
     FROM (VALUES {seed_values}) AS s(v)
     UNION ALL
     SELECT e.dst AS v, t.to_state AS q,

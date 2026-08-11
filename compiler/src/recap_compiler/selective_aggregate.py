@@ -107,13 +107,113 @@ def generate_skeleton(relation: TransitionsRelation, *, factorized: bool) -> Ske
     )
 
 
-def _referenced_columns(body: str, *, function_name: str, locus: str) -> list[exp.Column]:
+def complete_update_d_body(body: str, *, declared_keys: list[str]) -> str:
+    """`update_d`'s struct literal doesn't have to re-list every declared
+    key: any key left out defaults to passing its previous value through
+    unchanged (`D.<key>`) rather than being dropped from the dictionary --
+    reconstructing the whole struct on every hop just to change one field
+    is exactly the friction this is meant to remove. Returns a struct
+    literal that always covers every declared key.
+
+    Both Stage E (`standard_sql.register_aggregate_macros`) and Stage F
+    (`optimizer._flatten_update_d`) call this **before** doing anything
+    else with `update_d`, so a partial body behaves identically whether
+    pasted verbatim as a macro or flattened/inlined -- FR-22 equivalence
+    would otherwise silently break for exactly this case, since leaving a
+    struct partial and completing it are not the same body to paste versus
+    to decompose.
+
+    A body that isn't a struct literal (e.g. bare `D`, or an aggregate with
+    no declared keys) is returned unchanged -- there's nothing to
+    complete."""
+    if not declared_keys:
+        return body
     try:
-        parsed = sqlglot.parse_one(body, read="duckdb")
+        tree = sqlglot.parse_one(body, read="duckdb")
+    except sqlglot.errors.ParseError as exc:
+        raise RefError(f"update_d: could not parse expression body: {exc}", locus="update_d") from exc
+    if not isinstance(tree, exp.Struct):
+        return body
+    present = {prop.this.name for prop in tree.expressions}
+    missing = [key for key in declared_keys if key not in present]
+    if not missing:
+        return body  # already complete -- avoid reparsing/reformatting a body that didn't need it
+    for key in missing:
+        tree.append("expressions", exp.PropertyEQ(
+            this=exp.to_identifier(key), expression=exp.column(key, table=DICT_ALIAS)))
+    return tree.sql(dialect="duckdb")
+
+
+def normalize_update_d_body(body: str, *, declared_keys: list[str]) -> str:
+    """`update_d` accepts a second, equivalent form on top of the struct
+    literal: one or more `D.<key> = <expr>` assignment statements,
+    `;`-separated -- closer to how `UPDATE ... SET col = expr` reads than
+    reconstructing the whole dictionary from scratch to change one field.
+    Both forms may omit declared keys; either way, a key left unmentioned
+    defaults to passing its previous value through unchanged (`D.<key>`),
+    same as `complete_update_d_body`. Returns a struct literal that always
+    covers every declared key. Stage E (`standard_sql.
+    register_aggregate_macros`) and Stage F (`optimizer._flatten_update_d`)
+    call this instead of `complete_update_d_body` directly, so both
+    accepted forms normalize to the same thing before either stage does
+    anything else with `update_d` -- same FR-22 reasoning as
+    `complete_update_d_body` itself: pasting an assignment-statement body
+    verbatim as a macro would be invalid SQL (`D.key = expr` is a boolean
+    comparison, not a struct), so this conversion isn't optional plumbing,
+    it's what makes the second form usable at all.
+
+    A body that's a struct literal, or that parses as a single non-`=`
+    statement (bare `D`, or an aggregate with no declared keys), is handled
+    exactly as `complete_update_d_body` already does -- unwrapped here only
+    far enough to tell which case applies."""
+    if not declared_keys:
+        return body
+    try:
+        statements = [s for s in sqlglot.parse(body, read="duckdb") if s is not None]
+    except sqlglot.errors.ParseError as exc:
+        raise RefError(f"update_d: could not parse expression body: {exc}", locus="update_d") from exc
+    if not statements:
+        raise RefError("update_d: empty expression body", locus="update_d")
+
+    if len(statements) == 1 and isinstance(statements[0], exp.Struct):
+        return complete_update_d_body(body, declared_keys=declared_keys)
+    if len(statements) == 1 and not isinstance(statements[0], exp.EQ):
+        return body  # bare D, or anything else -- not this function's shape to normalize
+
+    assigned: dict[str, exp.Expression] = {}
+    for statement in statements:
+        is_assignment = (isinstance(statement, exp.EQ) and isinstance(statement.this, exp.Column)
+                          and statement.this.table == DICT_ALIAS)
+        if not is_assignment:
+            raise RefError(
+                f"update_d: expected a struct literal ({{key: expr, ...}}) or one or more "
+                f"'D.<key> = <expr>' assignments, could not use: {statement.sql(dialect='duckdb')!r}",
+                locus="update_d")
+        key = statement.this.name
+        if key not in declared_keys:
+            raise RefError(f"update_d assigns undeclared dictionary key 'D.{key}'", locus=f"D.{key}")
+        assigned[key] = statement.expression
+
+    tree = exp.Struct(expressions=[
+        exp.PropertyEQ(this=exp.to_identifier(key),
+                        expression=assigned.get(key, exp.column(key, table=DICT_ALIAS)))
+        for key in declared_keys
+    ])
+    return tree.sql(dialect="duckdb")
+
+
+def _referenced_columns(body: str, *, function_name: str, locus: str) -> list[exp.Column]:
+    """Parsed via `sqlglot.parse` (not `parse_one`) so a body written as
+    several `;`-separated statements -- `update_d`'s `D.<key> = <expr>`
+    assignment form -- has every statement's references checked, not just
+    the first. A single-statement body (the common case) behaves
+    identically either way."""
+    try:
+        statements = [s for s in sqlglot.parse(body, read="duckdb") if s is not None]
     except sqlglot.errors.ParseError as exc:
         raise RefError(
             f"{function_name}: could not parse expression body: {exc}", locus=locus) from exc
-    return list(parsed.find_all(exp.Column))
+    return [column for statement in statements for column in statement.find_all(exp.Column)]
 
 
 def _validate_init_d(body: str) -> None:

@@ -28,8 +28,10 @@ compiler/
 │   ├── optimizer.py                 Stage F: flattens D's dictionary keys into
 │   │                                 real columns and inlines the macro bodies
 │   │                                 directly into the query text
-│   └── execution.py                 Stage G: runs the query, shapes results
-│                                     (paths/endpoints/count), basic telemetry
+│   ├── execution.py                 Stage G: runs the query, shapes results
+│   │                                 (paths/endpoints/count), basic telemetry
+│   └── profiling.py                 diagnostic (not a spec stage): stage-by-stage
+│                                     timing breakdown, used by the demo and the UI
 └── tests/                     one test file per module above (webapp/app.py has
                                 no automated tests yet -- see CHECKLIST.md)
 ```
@@ -59,18 +61,43 @@ writing a regex against it. (Every edges table is guaranteed to have an
 see `CHECKLIST.md`.) Then type a label regex -- the NFA state/transition
 count updates live as you type, before you've touched anything else (the
 transitions table itself isn't shown, since it can get large fast). Then
-choose start vertices, pick one of the three FR-13 library aggregates and
-its parameters, set a length bound, and click **Compile & run**. It shows
-the generated SQL (both the unoptimized Stage E and optimized Stage F
-versions, if you leave the comparison checkbox on), the actual DuckDB
-results, timing, and a pass/fail banner confirming the two queries agree
-(FR-22).
+choose start vertices, and then either pick one of the three FR-13 library
+aggregates and its parameters, or switch to **custom aggregate** to author
+your own: write `init_d`, and its dictionary keys and their types are
+inferred automatically (via DuckDB's own type system) and shown live in a
+read-only table right below it -- there's no separate keys table to keep
+in sync by hand, so editing `init_d` is always enough. Then write
+`update_d`/`is_viable_d`/`is_viable_d_final`/`finalize_d`. Everything
+starts pre-filled with a genuinely working example (equivalent to the
+library's `bounded_range` on whatever numeric column is actually
+available) rather than a placeholder -- clicking **Compile & run** with
+nothing edited works out of the box, and editing from a real example is
+easier than editing from a comment. `update_d` accepts two forms: a struct
+literal `{key: expr, ...}`, or one or more `D.<key> = <expr>` assignments
+(`;`-separated for more than one) -- whichever you use, you don't need to
+mention *every* key `init_d` declares: leave one out and it keeps its
+previous value unchanged instead of being dropped from `D`. Set
+a length bound and click **Compile & run**.
+It shows the generated SQL (both the unoptimized Stage E and optimized
+Stage F versions, if you leave the comparison checkbox on), the actual
+DuckDB results, a pass/fail banner confirming the two queries agree
+(FR-22), and a stage-by-stage timing breakdown (bar chart + table) covering
+every step that run went through -- parsing the regex, loading the graph,
+validating the aggregate, generating SQL, and executing each query. On the
+bundled dataset, expect loading to dominate the "compile" side (~230ms,
+real CSV I/O) while every other pre-execution step is a few milliseconds
+or less -- the query executions themselves are what actually costs time.
+
+Every widget that configures the query is a plain (non-form) widget, so
+the whole form reacts live -- switching between library/custom, or between
+aggregate kinds, updates immediately, with no need to click a button first
+to see the right fields appear.
 
 This is an MVP scope, not the full spec'd authoring flow -- see
 `CHECKLIST.md`'s Stage I completion note for exactly what's in vs. out
-(short version: you pick from the three pre-written library aggregates with
-their parameters; you can't yet edit the generated `CASE` skeleton
-in-browser).
+(short version: custom aggregates are **factorized only** -- a body that
+depends on NFA state needs one expression per transition pair, and a real
+regex can have 100+ pairs, so that's deliberately not offered here yet).
 
 ## Seeing it run without a browser
 
@@ -78,7 +105,8 @@ in-browser).
 of a UI -- loads the real sample dataset, compiles the paper's Q1 regex,
 generates *both* the standard (Stage E) and optimized (Stage F) SQL for the
 same aggregate, runs both on DuckDB, checks they return the exact same
-paths (FR-22), and prints a timing comparison:
+paths (FR-22), and prints a timing breakdown covering every stage it went
+through, not just the two queries' own runtimes:
 
 ```bash
 cd compiler
@@ -119,7 +147,7 @@ validate_selective_aggregate(aggregate, edge_columns=edge_columns)  # raises Ref
 materialize_transitions(conn, relation)
 starts = select_start_vertices(handle, ids=[383])
 query = build_optimized_query(aggregate=aggregate, relation=relation,
-                               start_vertices=starts, length_bound=4)
+                               start_vertices=starts, length_bound=3)  # max edges per path
 print(query.sql)  # the generated SQL, inspectable (FR-25)
 
 result = run_query(conn, query, result_shape="paths")  # or "endpoints" / "count"
@@ -137,9 +165,11 @@ python3 -m pytest tests/ -v
 
 A (ingestion), B (regex frontend), C (NFA -> transitions relation), D
 (selective-aggregate frontend), E (standard SQL generation), F (the
-optimizer), G (execution), and I (workbench UI, MVP scope) are all
-implemented (70 automated tests across A-G; I has no automated tests yet,
-see `CHECKLIST.md`) -- a graph + regex + selective aggregate can be compiled
+optimizer), G (execution), and I (workbench UI, including live factorized
+custom-aggregate authoring) are all implemented (91 automated tests across
+A-G plus the timing-breakdown utility; I has no automated tests yet, see
+`CHECKLIST.md`) -- a graph + regex + selective aggregate (library or
+custom) can be compiled
 to both unoptimized and optimized SQL, actually run on DuckDB, and driven
 either from a script or a browser UI today, with FR-22 equivalence checked
 directly in tests, the demo script, and the UI. H (the negative-stability

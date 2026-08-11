@@ -36,12 +36,13 @@ it's glue over an already-working pipeline.
 | A | Data ingestion | FR-1..FR-4 | **Done** | 2026-08-06 (edge_id fix 2026-08-10) | `src/recap_compiler/ingestion.py` | `tests/test_ingestion.py` (13 cases) |
 | B | Regex frontend (Thompson's construction) | FR-5..FR-8 | **Done** | 2026-08-06 | `src/recap_compiler/regex_frontend.py` | `tests/test_regex_frontend.py` (14 cases) |
 | C | NFA -> transitions relation | FR-9, FR-10 | **Done** | 2026-08-06 | `src/recap_compiler/transitions.py` | `tests/test_transitions.py` (6 cases) |
-| D | Selective-aggregate frontend + skeleton generation | FR-11..FR-14 | **Done** | 2026-08-10 | `src/recap_compiler/selective_aggregate.py` | `tests/test_selective_aggregate.py` (15 cases) |
-| E | Standard ReCAP SQL generation | FR-15..FR-18 | **Done** (unoptimized -- see notes) | 2026-08-10 | `src/recap_compiler/standard_sql.py` | `tests/test_standard_sql.py` (5 cases) |
+| D | Selective-aggregate frontend + skeleton generation | FR-11..FR-14 | **Done** | 2026-08-10 | `src/recap_compiler/selective_aggregate.py` | `tests/test_selective_aggregate.py` (25 cases) |
+| E | Standard ReCAP SQL generation | FR-15..FR-18 | **Done** (unoptimized -- see notes) | 2026-08-10 | `src/recap_compiler/standard_sql.py` | `tests/test_standard_sql.py` (5 cases; `update_d` normalization covered via `test_optimizer.py`'s FR-22 equivalence tests) |
 | G | Execution + telemetry | FR-24..FR-26 | **Done** (minimal telemetry) | 2026-08-10 | `src/recap_compiler/execution.py` | `tests/test_execution.py` (6 cases) |
-| F | Optimizer: dictionary flattening + function inlining | FR-19..FR-23 | **Done** | 2026-08-10 | `src/recap_compiler/optimizer.py` | `tests/test_optimizer.py` (11 cases, incl. FR-22 equivalence) |
-| I | Workbench orchestration | FR-32, FR-33 | **Done** (MVP scope -- see notes) | 2026-08-10 | `webapp/app.py` | manual/bare-mode smoke test only, no automated tests (see notes) |
+| F | Optimizer: dictionary flattening + function inlining | FR-19..FR-23 | **Done** | 2026-08-10 | `src/recap_compiler/optimizer.py` | `tests/test_optimizer.py` (16 cases, incl. FR-22 equivalence) |
+| I | Workbench orchestration | FR-32, FR-33 | **Done** (MVP scope, now incl. factorized custom-aggregate authoring -- see notes) | 2026-08-10 | `webapp/app.py` | manual/bare-mode smoke test + a standalone script exercising the custom-aggregate code path directly (see notes); no automated UI tests |
 | Section 7 | Error taxonomy (cross-cutting) | E-INPUT, E-REGEX now; E-REF/E-TYPE/E-UNSUPPORTED/E-EXEC land with D/F/G | **Scaffolded** | 2026-08-06 | `src/recap_compiler/errors.py` | exercised via A/B tests |
+| -- | Stage-by-stage timing breakdown (not a spec item -- diagnostic/demo tool) | n/a | **Done** | 2026-08-10 | `src/recap_compiler/profiling.py` | `tests/test_profiling.py` (6 cases) |
 | H (stretch) | Negative-stability verifier | FR-27..FR-31 (Section 13, not committed) | Not started | -- | -- | -- |
 | J (optional) | LLM-assisted selective-aggregate authoring | FR-34..FR-43, NFR-6..9 (Part II) | Not started | -- | -- | -- |
 
@@ -50,15 +51,349 @@ it's glue over an already-working pipeline.
 Everything in the pipeline stages table is now done or explicitly deferred
 (H stretch, J optional -- see the 2026-08-10 spec-reconciliation note
 above). The natural next increments, none started:
-- **Full FR-32 authoring flow**: today's workbench (below) only exposes the
-  three FR-13 library aggregates with their parameters; it doesn't let the
-  author edit the generated `CASE` skeleton in-browser the way the full
-  spec describes. That needs a real code-editor widget plus live
-  re-validation against FR-14 as the author types.
+- **Non-factorized (per-transition) authoring in the UI.** User explicitly
+  chose to skip this for now ("let's skip the nfa-state-dependent one") --
+  a real regex can have 100+ transition pairs (Q1's has 103), so a
+  one-text-box-per-pair UI doesn't scale as-is. Worth revisiting with a
+  smarter design (e.g. only show pairs reachable from the chosen start
+  vertices, or a real code-editor widget) rather than a plain form.
 - **Vertices-file upload** (workbench currently always infers vertices from
   edges; FR-2's explicit vertices-file path isn't wired into the UI).
 - **Automated tests for `webapp/app.py`** -- see the Stage I completion note
   for why this cut has none and what a real test would need.
+- Module J (LLM-assisted authoring) now has a real place to plug into:
+  the custom-aggregate editor's five text areas are exactly "the author's
+  edit step" Module J's design assumes it drafts into (Part II, Section 1).
+
+## Completed: `path_length` now starts at 0, not 1 (2026-08-10)
+
+User asked for `path_length` to start at 0 "since we begin from a vertex
+and not an edge" -- i.e. it should count *edges traversed*, not *vertices
+visited*. Changed the anchor's literal in both `standard_sql.py` and
+`optimizer.py` from `1 AS path_length` to `0 AS path_length` (the
+recursive increment, `p.path_length + 1`, and the `WHERE p.path_length <
+{length_bound}` guard are both unchanged text). **This is not purely
+cosmetic -- it changes what `length_bound` means, on purpose:** since the
+guard text didn't change, `length_bound` now directly equals the maximum
+number of edges in any returned path (the standard graph-theoretic
+definition of "path length"), instead of the old "max edges = length_bound
+- 1" -- one hop deeper is now reachable for the same numeric `length_bound`
+as before. This is a real behavior change, not just relabeling, and it's
+the right one to make: the old off-by-one was confusing (`length_bound=4`
+silently meaning "3 edges"), and the new version is exactly what the name
+says.
+
+**Caught the real consequence of this before shipping it, not after:**
+re-ran `demo_pipeline.py` against the real dataset at the old
+`LENGTH_BOUND=4` and it **timed out at 60s** -- because "one hop deeper"
+at `length_bound=4` is now equivalent to the *old* `length_bound=5`, and
+the earlier navigation-experiment findings already documented that this
+exact regex/dataset combination (`~59x` branching in the "grow" state)
+blows up between `length_bound=5` and `6` (old numbering) -- `length_bound=6`
+old-numbering was already known to consume 40GB+ RAM. Fixed by lowering
+`demo_pipeline.py`'s `LENGTH_BOUND` from `4` to `3` (new semantics) --
+this reaches exactly the same 3 edges as the old default did, and
+re-running confirmed byte-for-byte the same result: 129,377 paths, ~1s,
+identical timing breakdown, sample rows' `path_length` values now correctly
+0-indexed (e.g. a row previously labeled `path_length=3` now reads `2`).
+Also lowered the workbench's `Length bound` widget default from `4` to `3`
+and its `min_value` from `1` to `0` (since `0` is now a meaningful value --
+"no edges, just the start vertex" -- not an invalid one), and updated its
+help text to state the new "max edges" meaning directly.
+
+Fixed six existing tests whose assertions hardcoded the old 1-indexed
+`path_length` values (`test_standard_sql.py`,`test_optimizer.py`) --
+recomputed each expected value by hand from the actual fixture graphs
+(not just "subtract 1" -- confirmed for each one whether the reachable
+*set* of vertices also changed now that one more hop is allowed, since
+amount-based pruning and length-based pruning don't always cut off at the
+same point). In every affected case, the amount-based `is_viable_d` check
+already excluded the same vertices independent of the length bound, so
+only the `path_length` *labels* needed correcting, not the reachable sets
+-- but that had to be verified per test, not assumed. All 91 tests still
+pass after the fixes.
+
+## Minor: renamed `q0`/`accepting states` labels in the UI (2026-08-10)
+
+Cosmetic only, no logic change: the NFA-summary line in `webapp/app.py`
+(right below the regex field) said `q0 = ...` -- automata-theory jargon --
+per user request, now reads `starting_state = ...` / `accepting_states =
+...`. Internal names (`TransitionsRelation.q0`/`.accepting_states` in
+`transitions.py`, used throughout `standard_sql.py`/`optimizer.py`) are
+unchanged -- this only touches the one user-facing display line.
+
+## Completed: dictionary keys are now inferred from `init_d`, not a separate table (2026-08-10)
+
+Same session as the `update_d`-completion fix below, follow-on to it. User
+hit the same underlying "two things must stay in sync" problem from a
+different angle: after editing `init_d` to drop `min_amount`, they got
+`[E-REF] init_d does not initialize declared key(s): ['min_amount']` --
+correct behavior (that error is exactly what the previous fix added, on
+purpose, since there's no sensible pass-through default at init time), but
+the *cause* was the same design flaw: `webapp/app.py`'s dictionary-keys
+table (`st.data_editor`) was an **independent, user-editable list**, not
+derived from `init_d` -- so editing `init_d` alone could never be
+"enough," no matter how the UI explained it. User's own diagnosis was
+exactly right: "if I apply the changes in init_d, and remove min, it
+should not appear in the table."
+
+Fixed by removing the second source of truth instead of documenting
+around it: `_infer_dictionary_keys(init_d_body)` derives both the key
+*names* and their *SQL types* directly from `init_d`'s own struct literal,
+by asking DuckDB itself -- `conn.sql(f"SELECT ({init_d_body}) AS d").types[0]`
+returns a `DuckDBPyType` whose `.children` is exactly `[(name, type), ...]`
+for a STRUCT (confirmed empirically before relying on it). A non-struct
+`init_d` (bare `NULL`, etc.) infers zero keys, matching the existing
+zero-dictionary-keys support. The dictionary-keys table is gone entirely;
+the UI now shows a **read-only** table computed live from whatever
+`init_d` currently says, right below the `init_d` text box, so the "I like
+to keep track of the variables" visibility the user wanted is preserved --
+it just can't go stale anymore, since it isn't independent input. The
+inferred keys are computed once per rerun and reused directly at compile
+time (no second inference pass, no duplicate-name guard needed either --
+that was only ever a symptom of the table being independently editable).
+
+**Consequence worth flagging, not yet hit but real:** type inference comes
+from whatever literal `init_d` happens to write -- `{k: 0}` infers `k` as
+`INTEGER`, not `DOUBLE`, which could surprise someone if `update_d` later
+computes a `DOUBLE` for that key (DuckDB's recursive CTE generally
+widens/casts this without complaint, but hasn't been stress-tested here).
+Our own default custom-aggregate example already avoids this (`-1e308`/
+`1e308` are float literals), and the zero-numeric-column fallback default
+was changed from `{my_key: 0}` to `{my_key: 0.0}` for the same reason.
+Worth a real test if this becomes a reported problem.
+
+## Completed: `update_d` now also accepts `D.<key> = <expr>` assignment syntax (2026-08-10)
+
+Same session, third round on `update_d` ergonomics. User tried exactly
+this syntax unprompted (`"D.max_amount = GREATEST(D.max_amount, e.amount)"`)
+and hit `[E-UNSUPPORTED] expected a struct literal ... to flatten` --
+asked whether this was a DuckDB limitation. It wasn't: DuckDB has no
+opinion here, the compiler had simply never implemented anything but the
+struct-literal form (a choice explicitly flagged, and deliberately
+deferred, in the previous `update_d`-completion note above). Given the
+user reached for this syntax naturally on their own, twice now in spirit,
+implemented it for real instead of continuing to explain around it.
+
+Added `normalize_update_d_body(body, declared_keys)` to
+`selective_aggregate.py`: accepts either the existing struct literal (and
+delegates to `complete_update_d_body` unchanged) or one or more
+`D.<key> = <expr>` assignment statements, `;`-separated -- parsed via
+`sqlglot.parse` (not `parse_one`, which handles multi-statement input
+ambiguously, silently keeping only the first statement in some cases --
+confirmed empirically before relying on either function). Each assignment
+statement must have a `D.`-qualified column on the left; an undeclared key
+on the left raises `RefError` immediately (`update_d assigns undeclared
+dictionary key ...`). Converts to the same completed-struct-literal
+representation `complete_update_d_body` already produces, so a key left
+unassigned defaults to pass-through, identically to the struct-literal
+form. `standard_sql.register_aggregate_macros` (Stage E) and
+`optimizer._flatten_update_d` (Stage F) both call `normalize_update_d_body`
+now instead of `complete_update_d_body` directly -- same FR-22 reasoning
+as before: pasting `D.key = expr` verbatim into a macro would be invalid
+SQL (a boolean comparison, not a struct), so this conversion is load-
+bearing for Stage E, not just a Stage F nicety.
+
+**Fixed a related, pre-existing validation gap while wiring this in:**
+`_referenced_columns` (Stage D's core validation primitive) used
+`sqlglot.parse_one`, which -- per the same ambiguous multi-statement
+behavior above -- could silently validate only the *first* of several
+`;`-separated statements. Switched it to `sqlglot.parse` (list) and walk
+every returned statement's columns. This was already a latent gap for
+any multi-statement body (none existed before this feature), and a
+happy side effect: since a `D.<key>` reference is validated as "must be
+declared" regardless of whether it appears as the left or right side of
+an `=`, the *existing* per-column validation logic already correctly
+rejects an undeclared assignment target with no code changes beyond the
+parser swap -- `normalize_update_d_body`'s own undeclared-key check is a
+defense-in-depth backstop for callers that skip `validate_selective_aggregate`
+(e.g. calling Stage E/F directly), not the primary gate.
+
+8 new tests: 6 in `test_selective_aggregate.py` for `normalize_update_d_body`
+itself (single assignment; multiple semicolon-separated assignments; still
+handles a plain struct literal; still passes bare `D` through; rejects an
+assignment to an undeclared key; rejects a non-assignment statement mixed
+in with real ones), 2 in `test_optimizer.py` (the assignment form produces
+identical results to the equivalent struct-literal form and to the library
+`bounded_range`; a single assignment leaves the unmentioned key visibly
+frozen at its init value). 91 tests passing total. Updated the workbench's
+`update_d` help text to document both accepted forms.
+
+## Completed: `update_d` no longer has to re-list every declared key (2026-08-10)
+
+User asked two related things after using the new custom-aggregate editor:
+whether dictionary fields could be read via `.` notation in `update_d` (they
+already can -- `D.<key>` is the existing convention), and hit a real crash
+trying to track only `max_amount` after dropping `min_amount` from
+`update_d`'s struct literal while leaving it declared: a raw
+`KeyError: 'min_amount'` traceback from `optimizer.py`, not a clean
+compiler error. Root cause: `_flatten_update_d`/`_decompose_struct`
+unconditionally assumed the struct literal covered every declared key --
+dropping one wasn't a supported way to say "stop updating this field," it
+was just an unhandled gap.
+
+Decided against inventing a new `D.key = expr` assignment-statement syntax
+(would need Stage E's macro-pasting to also start interpreting/
+reconstructing `update_d` instead of pasting it verbatim, a bigger,
+cross-stage change) in favor of a smaller fix that gets the same "easier"
+result: **a key left out of the struct literal now defaults to passing its
+previous value through unchanged** (`D.<key>`), instead of being silently
+dropped or crashing. Added `complete_update_d_body(body, declared_keys)`
+to `selective_aggregate.py` (Stage D) -- parses the body, and if it's a
+struct literal missing any declared key, appends `key: D.key` for each one
+via `sqlglot`'s AST `.append()` (confirmed via a quick check that DuckDB
+accepts the resulting quoted-key struct syntax identically to bare keys);
+returns the body **unchanged** (not just re-serialized) when nothing was
+actually missing, and passes through non-struct bodies (bare `D`, or an
+aggregate with no declared keys) untouched.
+
+**Critical design point, not just a nice-to-have:** both Stage E
+(`standard_sql.register_aggregate_macros`) and Stage F
+(`optimizer._flatten_update_d`) now call `complete_update_d_body` **before**
+doing anything else with `update_d` -- pasting a partial struct verbatim
+into a macro (Stage E's old behavior) and completing-then-decomposing it
+(Stage F) are not the same body, and doing only one of the two would have
+silently broken FR-22 equivalence for exactly this case (the standard
+query's `D` would be missing a field the optimized query's flattened
+columns still tracked). Caught this while designing the fix, before
+writing any code -- worth remembering as a general rule for this codebase:
+**any change to how `update_d`/`is_viable_d`/etc. are interpreted must land
+in both Stage E and Stage F identically, or write an equivalence test that
+would have caught the divergence.**
+
+Separately, `init_d` has the exact same shape of bug (`_decompose_struct`
+then unconditional `fields[key]`) but *cannot* get the same fix -- there's
+no previous value to default a missing key to at initialization. Turned
+that into a clean `RefError` ("init_d does not initialize declared key(s):
+[...]") instead of a raw `KeyError`.
+
+7 new tests: 4 in `test_selective_aggregate.py` for `complete_update_d_body`
+itself (fills a missing key; no-op when already complete; no-op on a
+non-struct body; no-op with zero declared keys), 3 in `test_optimizer.py`
+(a partial factorized `update_d` produces identical standard/optimized
+results, with the omitted key visibly frozen at its init value; the same
+for a non-factorized per-pair `update_d` where different pairs omit
+different keys; `init_d` missing a key raises `RefError`, not `KeyError`).
+Also updated the workbench's `update_d` help text to state the new
+behavior explicitly, since the whole point was to make hand-writing
+`update_d` easier.
+
+## Completed: factorized custom-aggregate authoring in the UI (2026-08-10)
+
+User confirmed starting with "the interactive end" (the skeleton-editing
+UI, FR-32/FR-12) before Module J, explicitly scoped to skip non-factorized
+(NFA-state-dependent) editing for the reason above. Added a live "Aggregate
+source" radio (library vs. custom) to `webapp/app.py`'s aggregate section.
+Custom mode: an editable dictionary-keys table (`st.data_editor`, add/
+remove rows, `name`/`sql_type` columns) and five `st.text_area` widgets for
+`init_d`/`update_d`/`is_viable_d`/`is_viable_d_final`/`finalize_d`. The
+resulting `SelectiveAggregate` feeds into the exact same, unchanged Stage
+E/F/G pipeline as a library aggregate -- no downstream code needed to
+change, which is exactly the payoff of Stage D's factorized data model
+already being a plain dataclass. Duplicate dictionary-key names are
+rejected before validation with a clear message (real FR-14 validation
+would otherwise fail confusingly on the duplicate struct key instead).
+
+**Follow-up fix, same day: the first version's defaults were actively
+misleading, and a user hit it immediately.** The initial defaults used
+`generate_skeleton(relation, factorized=True)`'s placeholder text for
+`update_d`/`is_viable_d` (a `-- TODO: single body (factorized): D`-style
+SQL *comment*, not real SQL) and, separately, `init_d`'s placeholder
+mentioned example key names `key1`/`key2` in a comment -- while the
+dictionary-keys table defaulted to a single row named `example_key`. A
+user copying the `key1` example into `update_d` got exactly the confusing
+error this predicts: `[E-REF] update_d references undeclared dictionary
+key 'D.key1'` -- correct behavior from FR-14's perspective (key1 really
+wasn't declared), but a bad first experience, since nothing in the UI's
+own defaults was internally consistent enough to just run. Fixed by
+replacing the placeholder-comment approach entirely: the custom-aggregate
+defaults are now a genuinely **working example**, dynamically built from
+whatever numeric column is actually available (preferring `amount` when
+present, since that's the bundled dataset's own property, falling back to
+the first numeric column found so it still works on an upload without an
+`amount` column) -- dictionary keys `max_<property>`/`min_<property>`, and
+all five bodies filled in as a real, valid `bounded_range`-equivalent
+aggregate. Clicking **Compile & run** with nothing edited now works and
+returns the same result as the library `bounded_range` entry, rather than
+being guaranteed to fail. `generate_skeleton` is no longer used by the UI
+(the `-- TODO` comment style it produces is fine as a hint text artifact,
+per FR-12's own framing, but was the wrong thing to use as directly-runnable
+widget defaults) -- import removed accordingly. General lesson: **when a
+default value can be run as-is, it should actually run** -- placeholder
+comments invite exactly this kind of "user copies the example literally,
+gets confused by an error that's technically correct" failure mode.
+Verified with a standalone script (not the UI, since no browser tool is
+available -- see the Stage I completion note) reproducing the app's exact
+default-computation logic: `default_property` resolves to `amount` on the
+bundled dataset, the generated bodies validate and run, and return the
+identical 129,377 paths the library `bounded_range` entry does. Separately
+re-confirmed (as in the original version of this note) that an
+intentionally malformed body still raises a clean `RefError` rather than
+crashing.
+
+**Follow-up fix, same session: dropped `st.form` for the whole query
+section, not just the regex field.** While wiring in the new "Aggregate
+source" radio, checked whether a form's *internal* conditional widgets
+(e.g. the existing aggregate-kind selectbox revealing different parameter
+widgets) actually update live before submit, since the new radio has the
+same shape of problem the regex field had. Checked Streamlit's own
+`st.form` docstring rather than assume: "interacting with a widget inside
+the form will do nothing" until submit -- confirming the *existing*
+aggregate-kind conditional already had this same latent bug (just never
+reported, unlike the regex one), and the new library/custom toggle would
+inherit it. Since profiling showed only `load_graph` (~230ms) and the two
+query executions (~900-1000ms each) are actually expensive -- see the
+timing-breakdown completion note below -- there was no performance reason
+to keep any of the configuration widgets inside a form. Removed
+`st.form("query_form")` entirely; every widget that configures the query
+(start vertices, length bound, aggregate source/kind/custom bodies) is now
+a plain widget that reruns and re-renders live, and a plain `st.button`
+("Compile & run") gates just the expensive load-and-execute block --
+`st.button` has the same "only True on the exact rerun it was clicked"
+semantics as `st.form_submit_button`, so the gating behavior is unchanged.
+General lesson, worth remembering beyond this one fix: **`st.form` doesn't
+make its own contents reactive to each other** -- it only batches
+everything until one submit event. If anything inside a form needs to
+show/hide based on another widget in the *same* form, that reveal won't
+happen until submit either, which reads as a bug to a user encountering it
+for the first time (as happened here, twice, before this fix).
+
+## Completed: stage-by-stage timing breakdown (2026-08-10)
+
+User asked, apropos of "what's next": "would it be possible to have a
+running time breakdown? ... measure everything, from parsing, loading, the
+actual SQL, etc." Added `src/recap_compiler/profiling.py` -- a small,
+spec-independent utility (`TimingBreakdown` + a `timed_stage` context
+manager) that either caller (the demo script, the workbench) wraps around
+each pipeline step to build an ordered `[(stage_name, ms), ...]` list, with
+`.total_ms` and `.as_rows()` (adds each stage's % of total) for display.
+Deliberately kept separate from `execution.Telemetry` (FR-26, which only
+measures the generated query's own execution) -- a query's
+`Telemetry.runtime_ms` is folded in as one line of the wider breakdown, not
+replaced by it. 6 new tests in `test_profiling.py` (76 passing total).
+
+Wired into both `demo_pipeline.py` (prints a text table at the end) and
+`webapp/app.py` (a bar chart + formatted table + total, after the FR-22
+banner). Stages measured in both: regex -> NFA (B), build transitions
+relation (C), load graph (A), validate aggregate (D), select start
+vertices (A), materialize transitions table (C), register macros + generate
+standard SQL (E), generate optimized SQL (F), execute each query (G). In
+the UI, the regex/relation are deliberately re-timed *inside* the timed
+run (even though they were already computed live above the form, per the
+earlier fix) so the breakdown reflects what a fresh end-to-end run would
+cost, not just the parts gated behind the submit button.
+
+**What the numbers actually show, confirmed by running it:** on the real
+dataset (Q1 regex, `bounded_range`, vertex 383, length_bound=4), loading
+the graph is ~230ms (real CSV I/O -- `read_csv_auto` over 78,600 rows);
+every other pre-execution stage (regex parsing, transitions relation,
+validation, SQL generation) is low single-digit milliseconds or less; the
+two query executions dominate at ~900-1000ms each, ~90%+ of the total.
+This is worth stating plainly in any demo: compiling this query is
+essentially free: the two-query FR-22 comparison's cost is the recursive
+join itself, not the compiler's own overhead, which is exactly the
+contrast the paper's own "we don't extend DuckDB, the win is early
+filtering inside the query" framing would predict.
 
 ## Completed: I (2026-08-10) -- Streamlit workbench, MVP scope
 

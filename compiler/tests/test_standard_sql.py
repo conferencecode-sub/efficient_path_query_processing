@@ -8,8 +8,8 @@ from recap_compiler.transitions import TransitionsRelation
 
 # A single-state loop NFA accepting any nonempty sequence of "purchase" edges
 # -- the simplest possible non-trivial regex, T = {(0,0,purchase)}, q0=0,
-# Q_F={0} (matches after at least one hop since path_length starts at 1 and
-# the outer filter doesn't distinguish "not yet moved" from "moved").
+# Q_F={0} (matches after at least one hop, but the outer filter doesn't
+# distinguish "not yet moved" from "moved" -- both have q=0).
 LOOP_RELATION = TransitionsRelation(rows=((0, 0, "purchase"),), q0=0, accepting_states=frozenset({0}))
 
 
@@ -42,10 +42,10 @@ def test_anchor_seeds_every_start_vertex_with_no_undefined_columns(conn):
         dictionary_keys=(), init_d="NULL", update_d="D", is_viable_d="TRUE",
         is_viable_d_final="TRUE", finalize_d="D", factorized=True,
     )
-    query = _run(conn, aggregate, start_vertices=[1, 4], length_bound=1)
+    query = _run(conn, aggregate, start_vertices=[1, 4], length_bound=0)
     rows = conn.execute(query.sql).fetchall()
     starts_seen = {row[0] for row in rows}
-    assert starts_seen == {1, 4}  # both seeds present, length_bound=1 means no hops taken yet
+    assert starts_seen == {1, 4}  # both seeds present, length_bound=0 means no hops taken (path_length starts at 0)
 
 
 def test_bounded_range_aggregate_prunes_the_out_of_range_edge(conn):
