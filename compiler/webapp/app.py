@@ -3,9 +3,14 @@
 A single-page Streamlit app wired directly to the existing A-G pipeline: no
 dataset, query, or aggregate is hard-coded (FR-33) -- the bundled sample
 graph is only a default, replaceable via the file uploader. Drives the
-pipeline end to end (FR-32): load data -> enter regex -> pick or author a
-selective aggregate -> compile -> run -> see the generated SQL, results,
-and telemetry.
+pipeline end to end (FR-32): load data -> optionally pick a label column and
+enter a regex -> pick or author a selective aggregate -> compile -> run ->
+see the generated SQL, results, and telemetry. A regex is no longer
+mandatory: leaving the label-column picker on its no-regex option builds
+the query over `transitions.trivial_relation()`'s single-state, self-
+looping automaton instead of a real regex's NFA -- every edge is explored
+regardless of label, filtered only by the aggregate, but through the exact
+same Stage E/F code path as a real regex, not a separate one.
 
 Every widget that configures the query (regex, start vertices, aggregate
 choice, custom aggregate bodies) is a plain, non-form widget, so the whole
@@ -45,7 +50,7 @@ import streamlit as st
 
 from recap_compiler.errors import RecapCompilerError, RefError
 from recap_compiler.execution import run_query
-from recap_compiler.ingestion import load_graph, select_start_vertices
+from recap_compiler.ingestion import load_graph, select_start_vertices, set_trivial_label_column
 from recap_compiler.optimizer import build_optimized_query
 from recap_compiler.profiling import TimingBreakdown, timed_stage
 from recap_compiler.regex_frontend import compile_regex_to_nfa
@@ -58,7 +63,7 @@ from recap_compiler.selective_aggregate import (
     validate_selective_aggregate,
 )
 from recap_compiler.standard_sql import build_standard_query, materialize_transitions, register_aggregate_macros
-from recap_compiler.transitions import build_transitions_relation
+from recap_compiler.transitions import build_transitions_relation, trivial_relation
 
 DEFAULT_DATASET = os.path.join(
     os.path.dirname(__file__), "..", "..", "ReCAP", "simple_dataset", "LG.csv")
@@ -68,6 +73,10 @@ EDGE_PREVIEW_ROWS = 10
 # Substrings of DuckDB type names (from DESCRIBE) that indicate a numeric
 # column -- covers all int widths/signedness, floats, and DECIMAL(p,s).
 _NUMERIC_TYPE_MARKERS = ("INT", "FLOAT", "DOUBLE", "DECIMAL", "REAL", "NUMERIC", "HUGEINT")
+# Substrings indicating a string-typed column -- offered as label-column
+# candidates, since a label regex matches against text values.
+_STRING_TYPE_MARKERS = ("VARCHAR", "TEXT", "STRING", "CHAR", "BLOB")
+_NO_REGEX_OPTION = "(no regex -- explore every edge)"
 
 _INTERMEDIATE_PATHS_HELP = (
     "How many rows the recursive query actually produced before the final filter "
@@ -86,6 +95,10 @@ _PEAK_MEMORY_HELP = (
 
 def _is_numeric_type(column_type: str) -> bool:
     return any(marker in column_type.upper() for marker in _NUMERIC_TYPE_MARKERS)
+
+
+def _is_string_type(column_type: str) -> bool:
+    return any(marker in column_type.upper() for marker in _STRING_TYPE_MARKERS)
 
 
 def _infer_dictionary_keys(init_d_body: str) -> tuple[DictionaryKey, ...]:
@@ -111,12 +124,15 @@ def _infer_dictionary_keys(init_d_body: str) -> tuple[DictionaryKey, ...]:
 
 @st.cache_data(show_spinner=False)
 def _probe_schema(csv_bytes: bytes | None, path: str):
-    """Loads just enough to show column names/types, counts, a small edge
-    preview, and (if there's a label column) the label alphabet, before the
-    user commits to a full compile+run -- cached so retyping other widgets
-    doesn't reload the graph every rerun. `load_graph` (Stage A) guarantees
-    an `edge_id` column exists even if the source didn't have one, so the
-    preview below always has a real identifier column to show."""
+    """Loads just enough to show column names/types, counts, and a small
+    edge preview, before the user commits to a full compile+run -- cached
+    so retyping other widgets doesn't reload the graph every rerun.
+    `load_graph` (Stage A) guarantees an `edge_id` column exists even if
+    the source didn't have one, so the preview below always has a real
+    identifier column to show. No particular column is assumed to hold
+    labels -- `label` is no longer a required (or even a special) column
+    at this stage; see `_distinct_values` for the label-alphabet display,
+    computed only for whichever column the user picks as the regex source."""
     conn = duckdb.connect()
     if csv_bytes is not None:
         with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as tmp:
@@ -129,11 +145,23 @@ def _probe_schema(csv_bytes: bytes | None, path: str):
     n_edges = conn.execute("SELECT count(*) FROM edges").fetchone()[0]
     n_vertices = conn.execute("SELECT count(*) FROM nodes").fetchone()[0]
     preview = conn.execute(f"SELECT * FROM edges LIMIT {EDGE_PREVIEW_ROWS}").df()
-    labels = None
-    if "label" in columns:
-        labels = [row[0] for row in
-                  conn.execute("SELECT DISTINCT label FROM edges ORDER BY label").fetchall()]
-    return columns, column_types, n_edges, n_vertices, preview, labels
+    return columns, column_types, n_edges, n_vertices, preview
+
+
+@st.cache_data(show_spinner=False)
+def _distinct_values(csv_bytes: bytes | None, path: str, column: str) -> list:
+    """The regex alphabet for whichever column the user designates as the
+    label source -- computed on demand for just that one column, not every
+    column up front, since the label source is now a live user choice
+    rather than a fixed 'label' column."""
+    conn = duckdb.connect()
+    if csv_bytes is not None:
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as tmp:
+            tmp.write(csv_bytes)
+            path = tmp.name
+    load_graph(conn, path)
+    return [row[0] for row in
+            conn.execute(f'SELECT DISTINCT "{column}" FROM edges ORDER BY "{column}"').fetchall()]
 
 
 def _signature_set(result, columns=("v", "q", "path_length")) -> set:
@@ -160,23 +188,21 @@ def _friendly_error(exc: RecapCompilerError) -> None:
 
 st.set_page_config(page_title="ReCAP Compiler", layout="wide")
 st.title("ReCAP Compiler workbench")
-st.caption("Path query = label regex + selective aggregate over a property graph, "
+st.caption("Path query = an optional label regex + a selective aggregate over a property graph, "
            "compiled to recursive SQL and run on DuckDB.")
 
 with st.sidebar:
     st.header("1. Graph data")
-    uploaded = st.file_uploader("Edges CSV (required columns: src, dst, label)", type="csv")
+    uploaded = st.file_uploader("Edges CSV (required columns: src, dst)", type="csv")
     dataset_label = uploaded.name if uploaded else "bundled sample: ReCAP/simple_dataset/LG.csv"
     st.caption(f"Using: {dataset_label}")
 
     try:
         csv_bytes = uploaded.getvalue() if uploaded else None
-        edge_columns, column_types, n_edges, n_vertices, edge_preview, labels = _probe_schema(
+        edge_columns, column_types, n_edges, n_vertices, edge_preview = _probe_schema(
             csv_bytes, DEFAULT_DATASET)
         st.success(f"{n_edges:,} edges, {n_vertices:,} vertices")
         st.caption(f"columns: {', '.join(edge_columns)}")
-        if labels is not None:
-            st.caption(f"label alphabet ({len(labels)}): {', '.join(map(str, labels))}")
     except RecapCompilerError as exc:
         _friendly_error(exc)
         st.stop()
@@ -184,15 +210,36 @@ with st.sidebar:
 st.subheader(f"Edge data (first {EDGE_PREVIEW_ROWS} rows)")
 st.dataframe(edge_preview, height=250)
 
-st.header("2. Label regex")
-regex = st.text_input("Label regex", value="(transfer|purchase|sale)+(phishing|scam)+")
+st.header("2. Label regex (optional)")
+st.caption("A selective aggregate doesn't inherently need a regex/NFA -- pick a label column here "
+           "only if this query should also filter by a path through specific edge labels.")
 
-try:
-    nfa = compile_regex_to_nfa(regex)
-    relation = build_transitions_relation(nfa)
-except RecapCompilerError as exc:
-    _friendly_error(exc)
-    st.stop()
+string_columns = [c for c in edge_columns if c not in {"src", "dst", "edge_id"}
+                  and _is_string_type(column_types[c])]
+label_options = [_NO_REGEX_OPTION] + string_columns
+default_index = label_options.index("label") if "label" in string_columns else 0
+label_column = st.selectbox(
+    "Label column", label_options, index=default_index,
+    help="Any string column works, not just one literally named 'label' -- its distinct values "
+         "become the regex alphabet. Leave the no-regex option selected to skip label matching "
+         "entirely and explore every edge up to the length bound instead.")
+use_regex = label_column != _NO_REGEX_OPTION
+
+if use_regex:
+    alphabet = _distinct_values(csv_bytes, DEFAULT_DATASET, label_column)
+    st.caption(f"label alphabet from '{label_column}' ({len(alphabet)}): {', '.join(map(str, alphabet))}")
+    regex = st.text_input("Label regex", value="(transfer|purchase|sale)+(phishing|scam)+")
+    try:
+        nfa = compile_regex_to_nfa(regex)
+        relation = build_transitions_relation(nfa)
+    except RecapCompilerError as exc:
+        _friendly_error(exc)
+        st.stop()
+else:
+    st.caption("No label regex -- every edge up to the length bound will be explored, filtered "
+               "only by the selective aggregate below.")
+    regex = None
+    relation = None
 
 st.header("3. Start vertices and length bound")
 start_mode = st.radio("Start vertices", ["Specific vertex id", "Out-degree band"], horizontal=True)
@@ -296,10 +343,11 @@ else:
     custom_update_d = st.text_area(
         "update_d(D, e)", value=_default_update_d, height=80,
         help="Two accepted forms: a struct literal `{key: expr, ...}`, or one or more "
-             "`D.<key> = <expr>` assignments (separate with `;` for more than one) -- e.g. "
-             "`D.max_amount = GREATEST(D.max_amount, e.amount)`. Either way, you don't have to "
-             "mention every key from init_d: leave one out and it automatically keeps its "
-             "previous value unchanged instead of being removed from D.")
+             "`D.<key> = <expr>` assignments -- e.g. `D.max_amount = GREATEST(D.max_amount, "
+             "e.amount)`, put each assignment on its own line (or separate them with `;` on "
+             "one line if you prefer). Either way, you don't have to mention every key from "
+             "init_d: leave one out and it automatically keeps its previous value unchanged "
+             "instead of being removed from D.")
     custom_is_viable_d = st.text_area("is_viable_d(D, e)", value=_default_is_viable_d, height=80)
     custom_is_viable_d_final = st.text_area("is_viable_d_final(D)", value=_default_is_viable_d_final,
                                              height=60)
@@ -321,10 +369,15 @@ if not run_clicked:
 # a fresh run would do, not just the parts gated behind this button.
 breakdown = TimingBreakdown()
 try:
-    with timed_stage(breakdown, "B: regex -> NFA"):
-        nfa = compile_regex_to_nfa(regex)
-    with timed_stage(breakdown, "C: build transitions relation"):
-        relation = build_transitions_relation(nfa)  # deterministic (NFR-1) -- same content as above
+    if use_regex:
+        with timed_stage(breakdown, "B: regex -> NFA"):
+            nfa = compile_regex_to_nfa(regex)
+        with timed_stage(breakdown, "C: build transitions relation"):
+            relation = build_transitions_relation(nfa)  # deterministic (NFR-1) -- same content as above
+    else:
+        # No regex chosen -- still a real (if trivial) automaton, so this
+        # goes through the exact same Stage E/F code path as a real regex.
+        relation = trivial_relation()
 
     if aggregate_source == "Library aggregate (FR-13)":
         if aggregate_kind == "Bounded range (max - min <= U)":
@@ -355,7 +408,13 @@ try:
     else:
         dataset_path = DEFAULT_DATASET
     with timed_stage(breakdown, "A: load graph"):
-        handle = load_graph(conn, dataset_path)
+        handle = load_graph(conn, dataset_path,
+                             label_column=label_column if use_regex else None)
+        if not use_regex:
+            # Every edge must carry trivial_relation()'s constant label for
+            # its self-loop to actually match every edge, regardless of any
+            # real label the source data has.
+            set_trivial_label_column(conn)
 
     with timed_stage(breakdown, "D: validate aggregate"):
         validate_selective_aggregate(aggregate, edge_columns=set(edge_columns))

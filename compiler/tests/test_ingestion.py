@@ -2,7 +2,7 @@ import duckdb
 import pytest
 
 from recap_compiler.errors import IngestionError
-from recap_compiler.ingestion import load_graph, select_start_vertices
+from recap_compiler.ingestion import load_graph, select_start_vertices, set_label_column
 
 
 def _write_csv(path, header, rows):
@@ -119,3 +119,53 @@ def test_select_start_vertices_requires_exactly_one_mode(conn, edges_csv):
         select_start_vertices(handle)
     with pytest.raises(IngestionError):
         select_start_vertices(handle, ids=[1], predicate="1=1")
+
+
+# --- label is now optional (a regex-less query doesn't need one); a graph
+# with no notion of "label" is a valid input, and any string column can be
+# designated as the label source via set_label_column -----------------------
+
+def test_load_graph_does_not_require_a_label_column(conn, tmp_path):
+    path = tmp_path / "no_label_edges.csv"
+    _write_csv(path, "src,dst,amount", ["1,2,10", "2,3,20"])
+    load_graph(conn, str(path))  # must not raise
+    columns = {row[0] for row in conn.execute("DESCRIBE edges").fetchall()}
+    assert "label" not in columns
+    assert conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0] == 2
+
+
+def test_set_label_column_derives_label_from_a_differently_named_column(conn, tmp_path):
+    path = tmp_path / "edges.csv"
+    _write_csv(path, "src,dst,purchase_pattern", ["1,2,recurring", "2,3,one_off"])
+    load_graph(conn, str(path))
+    set_label_column(conn, "purchase_pattern")
+    rows = conn.execute("SELECT purchase_pattern, label FROM edges ORDER BY src").fetchall()
+    assert rows == [("recurring", "recurring"), ("one_off", "one_off")]  # original column untouched
+
+
+def test_set_label_column_replaces_a_pre_existing_label_column(conn, edges_csv):
+    load_graph(conn, edges_csv)  # edges_csv already has its own label column (a/b)
+    set_label_column(conn, "amount")
+    labels = {row[0] for row in conn.execute("SELECT label FROM edges").fetchall()}
+    assert labels == {"10", "20", "30", "40", "50", "60"}  # replaced, not duplicated/ambiguous
+
+
+def test_set_label_column_is_a_no_op_when_column_is_already_label(conn, edges_csv):
+    load_graph(conn, edges_csv)
+    before = conn.execute("SELECT * FROM edges ORDER BY src, dst").fetchall()
+    set_label_column(conn, "label")
+    after = conn.execute("SELECT * FROM edges ORDER BY src, dst").fetchall()
+    assert before == after
+
+
+def test_set_label_column_rejects_unknown_column(conn, edges_csv):
+    load_graph(conn, edges_csv)
+    with pytest.raises(IngestionError):
+        set_label_column(conn, "nonexistent")
+
+
+def test_load_graph_label_column_argument_wires_through(conn, tmp_path):
+    path = tmp_path / "edges.csv"
+    _write_csv(path, "src,dst,purchase_pattern", ["1,2,recurring"])
+    load_graph(conn, str(path), label_column="purchase_pattern")
+    assert conn.execute("SELECT label FROM edges").fetchone()[0] == "recurring"

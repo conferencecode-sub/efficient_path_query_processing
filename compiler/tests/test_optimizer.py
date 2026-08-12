@@ -3,10 +3,11 @@ import pytest
 
 from recap_compiler.errors import ExecutionError, RefError, UnsupportedError
 from recap_compiler.execution import run_query
+from recap_compiler.ingestion import set_trivial_label_column
 from recap_compiler.optimizer import build_optimized_query
 from recap_compiler.selective_aggregate import DictionaryKey, SelectiveAggregate, adjacent_edge_predicate, bounded_range
 from recap_compiler.standard_sql import build_standard_query, materialize_transitions, register_aggregate_macros
-from recap_compiler.transitions import TransitionsRelation
+from recap_compiler.transitions import TransitionsRelation, trivial_relation
 
 LOOP_RELATION = TransitionsRelation(rows=((0, 0, "purchase"),), q0=0, accepting_states=frozenset({0}))
 TWO_STATE_RELATION = TransitionsRelation(
@@ -105,6 +106,57 @@ def test_fr22_no_dictionary_keys_equivalence():
     optimized_rows = {(v, q, path_length) for v, q, _d, path_length, _r
                        in conn.execute(optimized.sql).fetchall()}
     assert standard_rows == optimized_rows == {(1, 0, 0), (2, 0, 1)}
+
+
+# --- a "no regex" query still goes through the same automaton-shaped SQL,
+# just over transitions.trivial_relation()'s single self-looping state ------
+
+def test_fr22_trivial_relation_equivalence():
+    """A regex-less query (`trivial_relation()`) still has to agree between
+    Stage E and Stage F -- same FR-22 obligation, just with a single
+    self-looping state instead of a real regex's NFA."""
+    conn = _conn_with_edges([
+        (1, 1, 2, "purchase", 10.0), (2, 2, 3, "purchase", 20.0),
+        (3, 3, 4, "other", 999.0), (4, 1, 5, "other", 5.0)])
+    set_trivial_label_column(conn)  # overwrites the real 'purchase'/'other' labels above
+    relation = trivial_relation()
+    aggregate = bounded_range(property="amount", upper_bound=15.0)
+    standard, optimized = _both_queries(conn, aggregate, relation, start_vertices=[1], length_bound=4)
+    standard_rows = {(v, path_length) for v, _q, _d, path_length, _r in conn.execute(standard.sql).fetchall()}
+    optimized_rows = {(v, path_length) for v, _q, _d, path_length, _r in conn.execute(optimized.sql).fetchall()}
+    assert standard_rows == optimized_rows
+    assert (4, 3) not in optimized_rows  # amount 999 blows the range, pruned on both sides
+    assert (5, 1) in optimized_rows  # reached regardless of the edge's original label -- 'other' included too
+
+
+def test_trivial_relation_query_still_has_a_q_column_and_a_transitions_join():
+    conn = _conn_with_edges([(1, 1, 2, "purchase", 10.0)])
+    set_trivial_label_column(conn)
+    relation = trivial_relation()
+    aggregate = bounded_range(property="amount", upper_bound=15.0)
+    optimized = build_optimized_query(aggregate=aggregate, relation=relation,
+                                       start_vertices=[1], length_bound=3)
+    assert "AS q" in optimized.sql  # not a special-cased no-automaton query
+    assert "transitions" in optimized.sql
+
+
+def test_trivial_relation_supports_non_factorized_aggregates_too():
+    """The whole point of routing "no regex" through a trivial automaton
+    instead of a separate no-NFA code path: a non-factorized aggregate
+    (defined per NFA transition pair) still has meaning here, since the
+    trivial automaton has exactly one pair, (0, 0) -- no factorized-only
+    restriction is needed."""
+    conn = _conn_with_edges([(1, 1, 2, "purchase", 10.0), (2, 2, 3, "purchase", 999.0)])
+    set_trivial_label_column(conn)
+    relation = trivial_relation()
+    aggregate = SelectiveAggregate(
+        dictionary_keys=(), init_d="NULL", update_d={(0, 0): "D"}, is_viable_d={(0, 0): "e.amount <= 15.0"},
+        is_viable_d_final="TRUE", finalize_d="D", factorized=False,
+    )
+    standard, optimized = _both_queries(conn, aggregate, relation, start_vertices=[1], length_bound=3)
+    standard_rows = {row[0] for row in conn.execute(standard.sql).fetchall()}
+    optimized_rows = {row[0] for row in conn.execute(optimized.sql).fetchall()}
+    assert standard_rows == optimized_rows == {1, 2}  # amount=999 hop pruned on both sides
 
 
 def test_run_query_accepts_optimized_query_via_execution_module():

@@ -26,6 +26,27 @@ class TransitionsRelation:
     accepting_states: frozenset  # frozenset[int]
 
 
+# Placeholder label value for a "no regex" query's trivial automaton (see
+# `trivial_relation` and `ingestion.set_trivial_label_column`) -- not meant
+# to collide with a real dataset's own label alphabet, just to give the
+# single self-loop transition something to match against.
+TRIVIAL_LABEL = "*"
+
+
+def trivial_relation() -> TransitionsRelation:
+    """A single-state NFA (`q0=0`, `accepting_states={0}`) with one
+    self-loop on `TRIVIAL_LABEL` -- for a query with no label regex at
+    all. Every edge's `label` must be set to `TRIVIAL_LABEL` for the
+    self-loop to actually match every edge regardless of its real label
+    (`ingestion.set_trivial_label_column` does this). The point of routing
+    a "no regex" query through a real (if trivial) automaton, rather than
+    a second code path in Stage E/F with no automaton, is that
+    `build_standard_query`/`build_optimized_query` never need to know
+    whether a query "really" has a regex -- there's exactly one shape of
+    generated SQL, always."""
+    return TransitionsRelation(rows=((0, 0, TRIVIAL_LABEL),), q0=0, accepting_states=frozenset({0}))
+
+
 def build_transitions_relation(nfa: NFA) -> TransitionsRelation:
     # Sorted by str(value) for a deterministic state numbering (NFR-1): two
     # calls on the same NFA must produce the same T/q0/Q_F every time.

@@ -243,6 +243,30 @@ def test_normalize_update_d_body_converts_multiple_semicolon_separated_assignmen
     assert "LEAST(D.min_amount, e.amount)" in normalized
 
 
+def test_normalize_update_d_body_converts_one_assignment_per_line_with_no_semicolons():
+    normalized = normalize_update_d_body(
+        "D.max_amount = GREATEST(D.max_amount, e.amount)\n"
+        "D.min_amount = LEAST(D.min_amount, e.amount)",
+        declared_keys=["max_amount", "min_amount"])
+    assert "GREATEST(D.max_amount, e.amount)" in normalized
+    assert "LEAST(D.min_amount, e.amount)" in normalized
+
+
+def test_normalize_update_d_body_line_separated_form_can_still_omit_a_key():
+    normalized = normalize_update_d_body(
+        "D.max_amount = GREATEST(D.max_amount, e.amount)\n\n"  # blank line between -- should be ignored
+        "D.min_amount = LEAST(D.min_amount, e.amount)",
+        declared_keys=["max_amount", "min_amount", "count"])
+    assert "D.count" in normalized  # omitted key defaults to pass-through
+
+
+def test_normalize_update_d_body_does_not_mangle_a_multiline_struct_literal():
+    body = "{\n  max_amount: GREATEST(D.max_amount, e.amount),\n  min_amount: LEAST(D.min_amount, e.amount)\n}"
+    normalized = normalize_update_d_body(body, declared_keys=["max_amount", "min_amount"])
+    assert "GREATEST(D.max_amount, e.amount)" in normalized
+    assert "LEAST(D.min_amount, e.amount)" in normalized
+
+
 def test_normalize_update_d_body_still_handles_a_plain_struct_literal():
     body = "{max_amount: GREATEST(D.max_amount, e.amount)}"
     normalized = normalize_update_d_body(body, declared_keys=["max_amount", "min_amount"])

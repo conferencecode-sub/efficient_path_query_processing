@@ -280,6 +280,125 @@ Our own default custom-aggregate example already avoids this (`-1e308`/
 was changed from `{my_key: 0}` to `{my_key: 0.0}` for the same reason.
 Worth a real test if this becomes a reported problem.
 
+## Completed: `label` is no longer a required column -- a selective aggregate doesn't inherently need an NFA (2026-08-12)
+
+User's framing: since a factorized selective aggregate never references NFA
+state, the compiler shouldn't require every edge file to have a literal
+`label` column just to run a query with no regex at all.
+
+**First cut (superseded same day, see follow-up below):** a regex-less
+query dropped the automaton entirely -- no `q` column, no transitions
+join, no accepting-state filter, `Paths ⋈ Edges` filtered by the
+selective aggregate alone -- with `standard_sql`/`optimizer` taking
+`relation: TransitionsRelation | None` and a factorized-only restriction
+for the `None` case (a non-factorized aggregate's bodies are indexed by
+transition pairs that don't exist without an NFA).
+
+**Follow-up, same day: replaced with a trivial single-state automaton
+instead, per the user's explicit "for completeness" ask.** Rather than
+Stage E/F carrying two shapes of generated SQL (with-automaton and
+without), a "no regex" query now goes through the *same* automaton-based
+code path as a real regex, just over a single self-looping state that
+matches every edge. This is a strict simplification, not a tradeoff: it
+removed the `relation: TransitionsRelation | None` branching added in the
+first cut, and as a real side benefit, it also removed the factorized-only
+restriction -- a non-factorized aggregate's one transition pair, `(0, 0)`,
+now has a well-defined meaning even with no real regex (see
+`test_trivial_relation_supports_non_factorized_aggregates_too`).
+
+- **`transitions.py` (Stage C):** added `TRIVIAL_LABEL = "*"` and
+  `trivial_relation()` -- a `TransitionsRelation` with one row, `(0, 0,
+  TRIVIAL_LABEL)`, `q0=0`, `accepting_states={0}`. Every edge whose
+  `label` is `TRIVIAL_LABEL` matches this self-loop, so nothing is ever
+  excluded by it.
+- **`ingestion.py` (Stage A):** `REQUIRED_EDGE_COLUMNS` dropped to
+  `{"src", "dst"}` -- a graph with no notion of "label" is now a valid
+  input on its own. Factored the shared "rebuild `edges` with a derived
+  `label` column, replacing any pre-existing one" logic into
+  `_replace_label_column`, used by two public functions: `set_label_column
+  (conn, column)` derives `label` from *any* real column
+  (`CAST(column AS VARCHAR)`) for an actual regex query, leaving the
+  original column untouched; `set_trivial_label_column(conn)` sets every
+  edge's `label` to the constant `TRIVIAL_LABEL`, pairing with
+  `trivial_relation()` for a "no regex" query. `load_graph` grew an
+  optional `label_column` param that calls `set_label_column` right after
+  loading, for the common one-call case. 7 new tests in
+  `test_ingestion.py` (19 total).
+- **`standard_sql.py`/`optimizer.py` (Stage E/F):** reverted to their
+  original signatures (`relation: TransitionsRelation`, required, no
+  `None` case) -- a "no regex" query is simply a normal call with
+  `relation=trivial_relation()`, so `register_aggregate_macros`,
+  `build_standard_query`, and `build_optimized_query` needed **no**
+  branching at all for this feature; the generated SQL is identical in
+  shape whether the regex is real or trivial.
+- **`execution.py` (Stage G):** untouched either way -- `run_query` only
+  ever reads `.sql`/`.cte`.
+- **FR-22 still checked, not just argued, for the trivial-automaton case:**
+  `test_fr22_trivial_relation_equivalence` builds both queries over
+  `trivial_relation()` on a graph with mixed labels a real regex would
+  have filtered, and asserts identical `(v, path_length)` result sets.
+  Verified directly against the real dataset too (a standalone script):
+  641,373 paths from vertex 383 at length_bound=3 with no label filtering
+  at all (vs. 129,377 with the Q1 regex active) -- same result as the
+  first cut, now reached via `t.label = e.label` matching
+  `TRIVIAL_LABEL` on every row instead of no join at all.
+- **`webapp/app.py` (Stage I):** the "2. Label regex" section is now
+  "2. Label regex (optional)" -- a selectbox offering every *string*-typed
+  edge column (`_is_string_type`, mirroring the existing numeric-column
+  filter for aggregate properties) plus a `"(no regex -- explore every
+  edge)"` option first. Picking a column live-shows its alphabet (a new
+  `_distinct_values` cached helper, computed only for the chosen column,
+  not every column up front the way the old hardcoded-`label` display
+  did) and reveals the regex text input; picking "no regex" skips B/C
+  (no real NFA built) but still calls `set_trivial_label_column` after
+  `load_graph` and builds `relation = trivial_relation()`, so every
+  downstream call (`materialize_transitions`, `register_aggregate_macros`,
+  `build_standard_query`, `build_optimized_query`) runs completely
+  unconditionally on `use_regex` -- the branching lives only in how
+  `relation` gets built, not in how it's used afterward. Defaults to the
+  `label` column when one exists (preserves the old always-regex demo
+  experience for the bundled dataset) else defaults to no-regex. Sidebar
+  uploader text and the page-level caption updated to say the regex is
+  optional; `_probe_schema` no longer computes a `label` alphabet up front
+  (dropped the `labels` return value entirely -- superseded by
+  `_distinct_values`).
+
+12 new tests total across `test_ingestion.py` (7), `test_standard_sql.py`
+(2), and `test_optimizer.py` (3). 112 tests passing.
+
+## Completed: `update_d`'s assignment syntax now also accepts one assignment per line (2026-08-12)
+
+Follow-on ergonomics request for the `D.<key> = <expr>` assignment form
+added below: user asked whether each assignment could go on its own line
+instead of being `;`-separated, since that reads more naturally for
+several updates. Added `_parse_update_d_statements()` to
+`selective_aggregate.py`: tries `sqlglot.parse` on the body as-is first
+(this already handles a single statement -- including a struct literal
+formatted across multiple lines, since newlines inside one balanced
+expression are just whitespace to the parser -- and an already-`;`-
+separated list unchanged); only if that fails does it retry by treating
+each non-blank line as its own statement (stripping any trailing `;` per
+line, then rejoining with `;`) and reparsing. `normalize_update_d_body`
+calls this instead of parsing directly -- no other change needed, since
+downstream logic (per-statement `D.<key> = <expr>` validation, undeclared-
+key rejection, pass-through for omitted keys) doesn't care how the
+statement list was produced.
+
+**Why the fallback only fires after the plain parse fails, not always:**
+tried the line-splitting first and it would have mangled a multi-line
+struct literal (`{\n  key: expr,\n  ...\n}`) into several bogus statements
+(`{`, `key: expr,`, `}`) -- checked this by hand before writing the real
+fix. Trying the whole-body parse first means a multi-line struct literal
+never reaches the line-splitting path at all, since it already succeeds
+on the first attempt.
+
+3 new tests in `test_selective_aggregate.py` (one assignment per line with
+no semicolons; the line-separated form can still omit a key, with a blank
+line between statements ignored; a multi-line struct literal is
+confirmed unaffected by the new fallback). 101 tests passing total.
+Updated the workbench's `update_d` help text to mention one-per-line as
+the suggested style, semicolons as the compact alternative.
+
 ## Completed: `update_d` now also accepts `D.<key> = <expr>` assignment syntax (2026-08-10)
 
 Same session, third round on `update_d` ergonomics. User tried exactly

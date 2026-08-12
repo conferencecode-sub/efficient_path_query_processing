@@ -2,9 +2,10 @@ import duckdb
 import pytest
 
 from recap_compiler.errors import ExecutionError
+from recap_compiler.ingestion import set_trivial_label_column
 from recap_compiler.selective_aggregate import DictionaryKey, SelectiveAggregate, bounded_range
 from recap_compiler.standard_sql import build_standard_query, materialize_transitions, register_aggregate_macros
-from recap_compiler.transitions import TransitionsRelation
+from recap_compiler.transitions import TransitionsRelation, trivial_relation
 
 # A single-state loop NFA accepting any nonempty sequence of "purchase" edges
 # -- the simplest possible non-trivial regex, T = {(0,0,purchase)}, q0=0,
@@ -94,3 +95,37 @@ def test_no_accepting_states_raises_execution_error():
     empty_accept = TransitionsRelation(rows=((0, 0, "purchase"),), q0=0, accepting_states=frozenset())
     with pytest.raises(ExecutionError, match="no accepting states"):
         build_standard_query(relation=empty_accept, start_vertices=[1], length_bound=3)
+
+
+# --- a "no regex" query still goes through the same automaton-shaped SQL,
+# just over transitions.trivial_relation()'s single self-looping state ------
+
+def test_trivial_relation_explores_every_edge_regardless_of_its_original_label(conn):
+    aggregate = SelectiveAggregate(
+        dictionary_keys=(), init_d="NULL", update_d="D", is_viable_d="TRUE",
+        is_viable_d_final="TRUE", finalize_d="D", factorized=True,
+    )
+    set_trivial_label_column(conn)  # overwrites the fixture's real 'purchase'/'other' labels
+    relation = trivial_relation()
+    register_aggregate_macros(conn, aggregate)
+    materialize_transitions(conn, relation)
+    query = build_standard_query(relation=relation, start_vertices=[1], length_bound=3)
+    # the fixture's vertex-4 edge has amount 999 and a real bounded_range
+    # aggregate would prune it -- this aggregate never checks amount at all,
+    # so every edge (regardless of its original label) is followed up to
+    # the length bound, same as if there were no regex.
+    reached = {row[0] for row in conn.execute(query.sql).fetchall()}
+    assert reached == {1, 2, 3, 4}
+
+
+def test_trivial_relation_query_uses_the_same_join_shape_as_a_real_regex(conn):
+    aggregate = bounded_range(property="amount", upper_bound=15.0)
+    set_trivial_label_column(conn)
+    relation = trivial_relation()
+    register_aggregate_macros(conn, aggregate)
+    materialize_transitions(conn, relation)
+    query = build_standard_query(relation=relation, start_vertices=[1], length_bound=3)
+    assert "transitions" in query.sql  # not a special-cased no-automaton query
+    assert query.transitions_table == "transitions"
+    reached = {row[0] for row in conn.execute(query.sql).fetchall()}
+    assert 4 not in reached  # amount 999 still pruned by the aggregate itself

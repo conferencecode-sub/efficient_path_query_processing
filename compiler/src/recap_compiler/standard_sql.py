@@ -112,7 +112,13 @@ def build_standard_query(*, relation: TransitionsRelation, start_vertices: list[
     endpoints/count shapes (FR-24), so result shaping stays out of SQL
     generation. `register_aggregate_macros`/`materialize_transitions` must
     have already been run on the same connection this SQL will execute
-    against."""
+    against.
+
+    A "no regex" query is not a separate code path here -- it's built the
+    same way as any other, over `transitions.trivial_relation()`'s
+    single-state, self-looping automaton, so it goes through the exact
+    same join/macro shape as a real regex instead of a second one to
+    maintain."""
     if not start_vertices:
         raise ExecutionError("no start vertices given; nothing to seed the anchor with")
     if not relation.accepting_states:

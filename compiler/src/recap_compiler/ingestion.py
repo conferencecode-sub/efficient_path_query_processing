@@ -12,8 +12,9 @@ from dataclasses import dataclass
 import duckdb
 
 from .errors import IngestionError
+from .transitions import TRIVIAL_LABEL
 
-REQUIRED_EDGE_COLUMNS = {"src", "dst", "label"}
+REQUIRED_EDGE_COLUMNS = {"src", "dst"}
 REQUIRED_VERTEX_COLUMN = "id"
 EDGE_ID_COLUMN = "edge_id"  # matches selective_aggregate.trail_via_edge_ids's default id_column
 
@@ -83,18 +84,73 @@ def _ensure_edge_id(conn: duckdb.DuckDBPyConnection, table_name: str = "edges") 
         )
 
 
+def _replace_label_column(conn: duckdb.DuckDBPyConnection, table_name: str, label_expr_sql: str) -> None:
+    """Shared by `set_label_column`/`set_trivial_label_column`: rebuilds
+    `table_name` with a `label` column computed as `label_expr_sql`,
+    dropping any pre-existing `label` column first so the two never
+    collide into an ambiguous duplicate."""
+    columns = [row[0] for row in conn.execute(f"DESCRIBE {table_name}").fetchall()]
+    keep = [c for c in columns if c != "label"]
+    select_list = ", ".join(f'"{c}"' for c in keep)
+    conn.execute(
+        f'CREATE OR REPLACE TABLE {table_name} AS '
+        f'SELECT {select_list}, {label_expr_sql} AS label FROM {table_name}'
+    )
+
+
+def set_label_column(conn: duckdb.DuckDBPyConnection, column: str, *,
+                      table_name: str = "edges") -> None:
+    """Designates `column` as the regex-matching label column by deriving a
+    `label` column from it (`CAST(column AS VARCHAR)`), for a graph whose
+    label-carrying column isn't literally named `label` -- a regex query
+    can be built over any string column this way, not just one with that
+    exact name. `column` itself is left untouched (any aggregate reading
+    `e.<column>` directly, or a second call choosing a different column,
+    both keep working); a pre-existing `label` column, if any, is replaced
+    rather than duplicated. A no-op if `column` already *is* `label`."""
+    columns = {row[0] for row in conn.execute(f"DESCRIBE {table_name}").fetchall()}
+    if column not in columns:
+        raise IngestionError(f"cannot use unknown column '{column}' as the label column", locus=column)
+    if column == "label":
+        return
+    _replace_label_column(conn, table_name, f'CAST("{column}" AS VARCHAR)')
+
+
+def set_trivial_label_column(conn: duckdb.DuckDBPyConnection, *, table_name: str = "edges") -> None:
+    """Sets every edge's `label` to the constant `transitions.TRIVIAL_LABEL`,
+    for a "no regex" query: paired with `transitions.trivial_relation()`'s
+    single-state self-loop on that same constant, every edge matches
+    regardless of any real label it may have -- so a regex-less query is
+    still built and run through the exact same Stage E/F automaton-based
+    code path as a real regex, not a separate one. Real label values are
+    irrelevant here by construction (the whole point is a query that
+    doesn't filter by label), so a pre-existing `label` column is
+    replaced, same as `set_label_column`."""
+    _replace_label_column(conn, table_name, f"'{TRIVIAL_LABEL}'")
+
+
 def load_graph(conn: duckdb.DuckDBPyConnection, edges_source: str,
                vertices_source: str | None = None,
                edge_type_overrides: dict[str, str] | None = None,
-               vertex_type_overrides: dict[str, str] | None = None) -> GraphHandle:
-    """FR-1..FR-3: load edges (required src/dst/label + properties) and,
+               vertex_type_overrides: dict[str, str] | None = None,
+               label_column: str | None = None) -> GraphHandle:
+    """FR-1..FR-3: load edges (required src/dst + properties) and,
     optionally, vertices (required id + properties; inferred from edges when
     absent). `edges_source`/`vertices_source` may be a CSV path or the name
     of a table already registered on `conn`. Guarantees an `edge_id` column
     exists on `edges` (FR-13(ii)'s trail semantics need one), synthesizing
-    one from row position if the source didn't already have it."""
+    one from row position if the source didn't already have it.
+
+    `label` is no longer a required column -- a graph with no notion of
+    "label" at all is a valid input (see `set_trivial_label_column` for
+    running a "no regex" query over it). `label_column`, if given, is
+    passed straight to `set_label_column` after loading -- a convenience
+    for the common case of loading and designating a label column in one
+    call."""
     _load_relation(conn, edges_source, "edges", REQUIRED_EDGE_COLUMNS, edge_type_overrides)
     _ensure_edge_id(conn)
+    if label_column is not None:
+        set_label_column(conn, label_column)
 
     if vertices_source is not None:
         _load_relation(conn, vertices_source, "nodes", {REQUIRED_VERTEX_COLUMN},

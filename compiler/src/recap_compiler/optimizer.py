@@ -169,7 +169,11 @@ def build_optimized_query(*, aggregate: SelectiveAggregate, relation: Transition
     structure, but no `D` struct column and no macro calls internally
     (FR-19/FR-20). `D` is still reconstructed as a struct in the *output*
     columns (`D`/`result`) for a readable, apples-to-apples comparison
-    against the standard query's output shape."""
+    against the standard query's output shape.
+
+    A "no regex" query is not a separate code path here either -- see
+    `standard_sql.build_standard_query`'s docstring; both go through
+    `transitions.trivial_relation()` instead."""
     if not start_vertices:
         raise ExecutionError("no start vertices given; nothing to seed the anchor with")
     if not relation.accepting_states:

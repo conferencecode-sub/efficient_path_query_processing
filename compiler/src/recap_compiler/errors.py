@@ -21,7 +21,7 @@ class RecapCompilerError(Exception):
 
 
 class IngestionError(RecapCompilerError):
-    """E-INPUT: missing src/dst/label, unreadable file, type-inference conflict."""
+    """E-INPUT: missing src/dst, unknown label column, unreadable file, type-inference conflict."""
 
     category = "E-INPUT"
 
