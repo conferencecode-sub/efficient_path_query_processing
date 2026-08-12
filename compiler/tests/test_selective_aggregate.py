@@ -10,6 +10,7 @@ from recap_compiler.selective_aggregate import (
     generate_skeleton,
     normalize_update_d_body,
     trail_via_edge_ids,
+    typed_init_d,
     validate_selective_aggregate,
 )
 from recap_compiler.transitions import TransitionsRelation
@@ -261,3 +262,39 @@ def test_normalize_update_d_body_rejects_a_non_assignment_statement_among_severa
     with pytest.raises(RefError, match="expected a struct literal"):
         normalize_update_d_body(
             "D.max_amount = e.amount; TRUE", declared_keys=["max_amount", "min_amount"])
+
+
+# --- typed_init_d: casts each field to its declared type, so DuckDB can't
+# independently infer a too-narrow type for the anchor branch of the
+# recursive CTE (a real bug: a bare `NULL` for a last_timestamp_ms key
+# inferred as INTEGER, then overflowed once real BIGINT epoch-ms values
+# flowed through the recursive term) --------------------------------------
+
+def test_typed_init_d_casts_a_bare_null_to_the_declared_type():
+    agg = adjacent_edge_predicate(property="timestamp_ms")
+    typed = typed_init_d(agg)
+    # sqlglot renders the struct key quoted here (e.g. {'last_timestamp_ms':
+    # ...}), a cosmetically different but equally valid DuckDB struct-literal
+    # form -- checked via the real end-to-end regression test
+    # (test_adjacent_edge_predicate_does_not_overflow_on_real_bigint_timestamps
+    # in test_optimizer.py) rather than asserting on exact string form here.
+    assert "last_timestamp_ms" in typed
+    assert "CAST(NULL AS DOUBLE)" in typed
+
+
+def test_typed_init_d_casts_every_declared_key_independently():
+    agg = bounded_range(property="amount", upper_bound=15.0)
+    typed = typed_init_d(agg)
+    assert typed.count("CAST(") == 2  # max_amount and min_amount both cast
+    assert typed.count("AS DOUBLE") == 2
+
+
+def test_typed_init_d_is_a_no_op_with_no_declared_keys():
+    agg = SelectiveAggregate(dictionary_keys=(), init_d="NULL", update_d="D", is_viable_d="TRUE")
+    assert typed_init_d(agg) == "NULL"
+
+
+def test_typed_init_d_leaves_a_non_struct_body_unchanged():
+    agg = SelectiveAggregate(
+        dictionary_keys=(DictionaryKey("x", "DOUBLE"),), init_d="D", update_d="D", is_viable_d="TRUE")
+    assert typed_init_d(agg) == "D"

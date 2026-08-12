@@ -24,9 +24,10 @@ entries with its parameters, or author a **factorized** custom one (own
 dictionary keys + five SQL bodies, validated live via FR-14). Non-
 factorized (per-NFA-transition) authoring is deliberately out of scope --
 a real regex can have 100+ transition pairs (Q1's does), so a one-text-box-
-per-pair UI doesn't scale; see CHECKLIST.md. The negative-stability check
-(Section 13) and the LLM proposer (Module J) are both still unbuilt/
-deferred, so neither has a UI hook here either.
+per-pair UI doesn't scale; see CHECKLIST.md. The negative-stability
+verifier (Section 13) is still unbuilt/deferred and has no UI hook. An
+LLM-assisted drafting panel (Module J) was built, live-tested, and removed
+(2026-08-11, per user decision) -- see CHECKLIST.md for that history.
 
 Run with:
     cd compiler
@@ -67,6 +68,20 @@ EDGE_PREVIEW_ROWS = 10
 # Substrings of DuckDB type names (from DESCRIBE) that indicate a numeric
 # column -- covers all int widths/signedness, floats, and DECIMAL(p,s).
 _NUMERIC_TYPE_MARKERS = ("INT", "FLOAT", "DOUBLE", "DECIMAL", "REAL", "NUMERIC", "HUGEINT")
+
+_INTERMEDIATE_PATHS_HELP = (
+    "How many rows the recursive query actually produced before the final filter "
+    "(reaching an accepting state AND passing is_viable_d_final) was applied -- every "
+    "candidate path considered, viable or not. Comparing this between the optimized and "
+    "standard queries shows how much the early-pruning check (is_viable_d) actually cut "
+    "the search down, separate from how many paths end up in the final result.")
+_PEAK_MEMORY_HELP = (
+    "DuckDB's own peak buffer-memory usage for this connection (via PRAGMA "
+    "enable_profiling), in MB. Useful for spotting when a deep length_bound is about to "
+    "blow up before it actually OOMs (see CHECKLIST.md for how bad this regex/dataset "
+    "combination can get). Not perfectly isolated per query -- it's a high-water mark for "
+    "the whole connection, so when comparing standard vs. optimized (they share one "
+    "connection), the second query's number includes the first's.")
 
 
 def _is_numeric_type(column_type: str) -> bool:
@@ -169,7 +184,7 @@ with st.sidebar:
 st.subheader(f"Edge data (first {EDGE_PREVIEW_ROWS} rows)")
 st.dataframe(edge_preview, height=250)
 
-st.header("2. Label regex (Stages B/C: NFA + transitions, not shown -- can get large)")
+st.header("2. Label regex")
 regex = st.text_input("Label regex", value="(transfer|purchase|sale)+(phishing|scam)+")
 
 try:
@@ -178,12 +193,6 @@ try:
 except RecapCompilerError as exc:
     _friendly_error(exc)
     st.stop()
-
-starting_state = relation.q0
-accepting_states = sorted(relation.accepting_states)
-st.write(f"**{len(nfa.states)} states**, starting_state = `{starting_state}`, "
-         f"accepting_states = `{accepting_states}`, "
-         f"**{len(relation.rows)} transitions**")
 
 st.header("3. Start vertices and length bound")
 start_mode = st.radio("Start vertices", ["Specific vertex id", "Out-degree band"], horizontal=True)
@@ -263,6 +272,8 @@ else:
     else:
         _default_init_d, _default_update_d, _default_is_viable_d = (
             "{my_key: 0.0}", "{my_key: D.my_key}", "TRUE")
+    _default_is_viable_d_final = "TRUE"
+    _default_finalize_d = "D"
 
     custom_init_d = st.text_area(
         "init_d()", value=_default_init_d, height=80,
@@ -290,8 +301,9 @@ else:
              "mention every key from init_d: leave one out and it automatically keeps its "
              "previous value unchanged instead of being removed from D.")
     custom_is_viable_d = st.text_area("is_viable_d(D, e)", value=_default_is_viable_d, height=80)
-    custom_is_viable_d_final = st.text_area("is_viable_d_final(D)", value="TRUE", height=60)
-    custom_finalize_d = st.text_area("finalize_d(D)", value="D", height=60)
+    custom_is_viable_d_final = st.text_area("is_viable_d_final(D)", value=_default_is_viable_d_final,
+                                             height=60)
+    custom_finalize_d = st.text_area("finalize_d(D)", value=_default_finalize_d, height=60)
 
 compare_to_standard = st.checkbox(
     "Also run the unoptimized (Stage E) query, to check it agrees with the optimized one (FR-22)",
@@ -395,7 +407,10 @@ with col_opt if compare_to_standard else col_std:
     st.code(optimized_query.sql, language="sql")
     st.metric("Paths found", f"{len(optimized_result.rows):,}")
     st.metric("Runtime", f"{optimized_result.telemetry.runtime_ms:.1f} ms")
-    st.metric("Intermediate paths explored", f"{optimized_result.telemetry.intermediate_paths:,}")
+    st.metric("Intermediate paths explored", f"{optimized_result.telemetry.intermediate_paths:,}",
+              help=_INTERMEDIATE_PATHS_HELP)
+    st.metric("Peak DuckDB buffer memory", f"{optimized_result.telemetry.peak_buffer_memory_mb:,.1f} MB",
+              help=_PEAK_MEMORY_HELP)
     st.dataframe(_expand_struct_columns(optimized_result).head(200))
 
 if compare_to_standard:
@@ -404,7 +419,13 @@ if compare_to_standard:
         st.code(standard_query.sql, language="sql")
         st.metric("Paths found", f"{len(standard_result.rows):,}")
         st.metric("Runtime", f"{standard_result.telemetry.runtime_ms:.1f} ms")
-        st.metric("Intermediate paths explored", f"{standard_result.telemetry.intermediate_paths:,}")
+        st.metric("Intermediate paths explored", f"{standard_result.telemetry.intermediate_paths:,}",
+                  help=_INTERMEDIATE_PATHS_HELP)
+        st.metric("Peak DuckDB buffer memory", f"{standard_result.telemetry.peak_buffer_memory_mb:,.1f} MB",
+                  help=_PEAK_MEMORY_HELP)
+        st.caption("This connection ran the optimized query first, so this figure is the peak "
+                   "since then, not isolated to just this query -- DuckDB's own profiler tracks "
+                   "a high-water mark for the whole connection, not per query.")
         st.dataframe(_expand_struct_columns(standard_result).head(200))
 
     st.divider()

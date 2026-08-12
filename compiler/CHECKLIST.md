@@ -44,13 +44,133 @@ it's glue over an already-working pipeline.
 | Section 7 | Error taxonomy (cross-cutting) | E-INPUT, E-REGEX now; E-REF/E-TYPE/E-UNSUPPORTED/E-EXEC land with D/F/G | **Scaffolded** | 2026-08-06 | `src/recap_compiler/errors.py` | exercised via A/B tests |
 | -- | Stage-by-stage timing breakdown (not a spec item -- diagnostic/demo tool) | n/a | **Done** | 2026-08-10 | `src/recap_compiler/profiling.py` | `tests/test_profiling.py` (6 cases) |
 | H (stretch) | Negative-stability verifier | FR-27..FR-31 (Section 13, not committed) | Not started | -- | -- | -- |
-| J (optional) | LLM-assisted selective-aggregate authoring | FR-34..FR-43, NFR-6..9 (Part II) | Not started | -- | -- | -- |
+| J (optional) | LLM-assisted selective-aggregate authoring | *(spec section removed)* | **Removed** (built, live-tested, then removed per explicit user decision) | built 2026-08-11, removed 2026-08-11 | -- | -- |
+
+## Module J -- built, live-tested, then removed (2026-08-11)
+
+An optional LLM-assisted selective-aggregate authoring module (spec Part II,
+FR-34..43/NFR-6..9) was designed, built, and tested across most of this
+session, then **removed entirely per explicit user decision** ("We have
+decided to remove the LLM bit"). Summary, since the detailed day-of notes
+are no longer useful once the code is gone:
+
+- **What it was:** an optional branch inside the Custom-aggregate authoring
+  UI. Given a plain-English (and/or SQL-style) constraint description, a
+  local model drafted the five selective-aggregate function bodies plus a
+  `negatively_stable` self-classification, reusing the existing FR-14/FR-23
+  validation gates unchanged (no privileged path for LLM output vs.
+  hand-written input).
+- **Key design revision during development:** FR-36 originally rejected
+  outright any proposal where the model wasn't confident but still
+  attempted a real pruning check. Changed (per explicit user framing --
+  "the LLM does not need to be sure ... the user is the ultimate line of
+  defense") to *override* the compiled aggregate's `is_viable_d` to `TRUE`
+  in code whenever unconfident, while still showing the model's original
+  attempt to the user as a clearly-flagged, unvetted candidate they could
+  manually promote. This kept the safety guarantee (no wrong result
+  without an explicit human action) while adding visibility instead of
+  concealment.
+- **Infra:** installed Ollama locally under `~/.local/ollama` (no root/
+  systemd -- a plain background process, reversible). Tried three models:
+  `qwen2.5:7b-instruct-q4_K_M` (best of the three, but still 40s-8min per
+  draft depending on prompt size before a later prompt-trimming fix),
+  `qwen3:8b` (regressed -- both native thinking mode and plain generation
+  were slower on this hardware), `qwen2.5:3b-instruct` (regressed on both
+  speed *and* accuracy -- failed all three test cases with real errors).
+  Also tried disabling the Vulkan GPU backend for CPU-only inference: no
+  meaningful difference either way. Conclusion reached before removal: this
+  specific hardware (old Tesla M10s, weak either as GPU or CPU target for
+  local LLM inference) was the dominant constraint, not model choice.
+- **Real, live-tested findings on model accuracy:** two genuine
+  miscalibrations were found and confirmed via real (not fake-`generate`)
+  model calls against the real dataset -- both **false negatives** (the
+  model deferred/was unsure about constraints that actually were
+  negatively stable: a max-min bound, and a SUM upper bound with
+  known-non-negative amounts), never a false positive (an unsound pruning
+  predicate wrongly classified `yes`) -- consistent with the fail-safe
+  design's intent even when the model's own judgment was wrong. Tried
+  reordering the JSON schema so a `brief_reasoning` field was generated
+  *before* the classification (since JSON emits token-by-token in field
+  order, and the classification field used to come first, meaning the
+  model committed before writing any reasoning at all) -- result was a
+  genuine mixed bag (fixed one case, flipped another from correct to
+  incorrect), not a clean win.
+- **What was removed:** `src/recap_compiler/llm_proposer.py`,
+  `tests/test_llm_proposer.py`, the Draft-with-LLM UI panel and its
+  imports/session-state in `webapp/app.py`, `ProposerParseError`/
+  `ProposerUnavailableError` from `errors.py`, the `llm` optional-dependency
+  group from `pyproject.toml`, the `logs/` gitignore entry and its one real
+  log file, and the entire Part II section of
+  `new_compiler_requirements/compiler_reqs.md` (that document is Part I
+  only now). The Ollama installation and pulled model weights are left on
+  disk (`~/.local/ollama`, several GB) -- infrastructure, not code; not
+  removed automatically, flagged as optional cleanup if wanted.
+- **What was *not* removed, because it isn't LLM-specific:** two real,
+  independent fixes made while Module J existed turned out to matter for
+  the deterministic compiler regardless of Module J's presence -- see the
+  two notes immediately below (`typed_init_d` and peak memory telemetry).
+  These stay.
+
+**Real DuckDB bug found and fixed (2026-08-11), reported by the user
+testing the `adjacent_edge_predicate` library entry over `timestamp_ms`.**
+Error: `Conversion Error: Type INT64 with value 1665251714000 can't be
+cast ... INT32`. Root cause: `DictionaryKey.sql_type` was captured
+metadata that nothing in codegen ever actually consulted --
+`adjacent_edge_predicate`'s `init_d = "{last_key: NULL}"` left that `NULL`
+untyped, so DuckDB inferred *some* type for the recursive CTE's anchor
+branch independently of what `update_d`'s real values would later need,
+and inferred something too narrow (`INTEGER`) -- overflowing once real
+BIGINT epoch-ms timestamps flowed through the recursive term. Not
+specific to this one library entry: any aggregate (custom or, formerly,
+LLM-drafted) with an ambiguously-typed `init_d` literal for a key that
+later holds large integer values has the same latent bug.
+
+Fixed with `typed_init_d()` (`selective_aggregate.py`): casts each
+`init_d` field to its already-declared `DictionaryKey.sql_type` before
+Stage E pastes it into the `init_d()` macro body and before Stage F
+decomposes it into anchor columns -- same "both call sites, for FR-22
+equivalence" reasoning `normalize_update_d_body` needed, and for the same
+reason: an anchor typed differently between the two stages would make
+them silently disagree, not just one of them wrong. Verified against the
+real reported scenario (a BIGINT column with genuine epoch-ms values) end
+to end: both standard and optimized queries now run and agree exactly.
+5 tests (4 unit tests for `typed_init_d` in `test_selective_aggregate.py`,
+1 end-to-end regression reproducing the exact reported bug in
+`test_optimizer.py`).
+
+**Peak memory telemetry added (2026-08-11), per user request** -- Stage G's
+module docstring had literally flagged this as a known gap ("Peak memory
+isn't measured yet ... left for later") since Stage G was first built.
+Checked DuckDB 1.4.1's actual capabilities empirically before picking an
+approach (per this project's own established practice): `PRAGMA
+enable_profiling='json'` exposes `system_peak_buffer_memory` directly, no
+manual polling/`resource.ru_maxrss` needed. **Verified, not assumed, a real
+limitation before shipping it:** this figure is a high-water mark for the
+whole *connection's* lifetime, not reset per query -- confirmed empirically
+by running a small query after a large one on the same connection and
+seeing the same (large) peak reported for both, even after `DROP TABLE`
+and toggling profiling off/on in between. Accurate for one fresh
+`duckdb.connect()` per measured run (true of `demo_pipeline.py` and of a
+single webapp "Compile & run" click when FR-22 comparison is off); when
+comparing standard vs. optimized in one click, the second query's number
+includes the first's, honestly labeled as such in both the webapp caption
+and `execution.py`'s module docstring rather than silently overstating
+precision. `Telemetry.peak_buffer_memory_mb` added; wired into
+`webapp/app.py` (metric with a `help` tooltip under both Optimized/Standard
+columns) and `demo_pipeline.py`. Also fixed a real state-leak risk while
+building this: disabling profiling and cleaning up the temp
+profiling-output file now happens in a `finally` regardless of whether the
+query succeeded -- without it, a failed query would leave the connection
+pointed at a deleted file path, breaking the *next* query on that
+connection too (a test, `test_a_failed_query_still_leaves_the_connection_usable`, guards this specifically).
 
 ## Next up
 
-Everything in the pipeline stages table is now done or explicitly deferred
-(H stretch, J optional -- see the 2026-08-10 spec-reconciliation note
-above). The natural next increments, none started:
+- **`bounded_sum` library entry (FR-13 style).** A deterministic
+  SUM(property) <= U aggregate, valid whenever property is known
+  non-negative (mirrors `bounded_range`'s max-min pattern) -- a natural
+  fourth FR-13 library entry alongside `bounded_range`/
+  `adjacent_edge_predicate`/`trail_via_edge_ids`. Not started.
 - **Non-factorized (per-transition) authoring in the UI.** User explicitly
   chose to skip this for now ("let's skip the nfa-state-dependent one") --
   a real regex can have 100+ transition pairs (Q1's has 103), so a
@@ -61,9 +181,6 @@ above). The natural next increments, none started:
   edges; FR-2's explicit vertices-file path isn't wired into the UI).
 - **Automated tests for `webapp/app.py`** -- see the Stage I completion note
   for why this cut has none and what a real test would need.
-- Module J (LLM-assisted authoring) now has a real place to plug into:
-  the custom-aggregate editor's five text areas are exactly "the author's
-  edit step" Module J's design assumes it drafts into (Part II, Section 1).
 
 ## Completed: `path_length` now starts at 0, not 1 (2026-08-10)
 

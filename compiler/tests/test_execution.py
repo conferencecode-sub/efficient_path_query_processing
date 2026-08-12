@@ -88,3 +88,31 @@ def test_unknown_result_shape_raises_execution_error(query_and_conn):
     query, conn = query_and_conn
     with pytest.raises(ExecutionError, match="unknown result_shape"):
         run_query(conn, query, result_shape="bogus")
+
+
+# --- peak_buffer_memory_mb (2026-08-11, per user request) ------------------
+
+def test_telemetry_reports_positive_peak_memory(query_and_conn):
+    query, conn = query_and_conn
+    result = run_query(conn, query, result_shape="paths")
+    assert result.telemetry.peak_buffer_memory_mb > 0
+
+
+def test_a_failed_query_still_leaves_the_connection_usable(query_and_conn):
+    # A real risk with toggling PRAGMA enable_profiling/profiling_output
+    # around the query: if a failure skips disabling it, the connection is
+    # left pointed at a (now-deleted) profiling_output path, and the *next*
+    # query on it -- even an unrelated one -- fails too. Build a query with
+    # a `.cte` that's valid SQL (so `wrapped` fails cleanly, not via a
+    # Python-level exception before profiling even starts) but references a
+    # nonexistent table, forcing the DuckDB-level failure path.
+    query, conn = query_and_conn
+    broken = type(query)(sql="SELECT * FROM does_not_exist", cte=query.cte,
+                          transitions_table=query.transitions_table)
+    with pytest.raises(ExecutionError):
+        run_query(conn, broken, result_shape="paths")
+
+    # The connection itself must still work afterward -- profiling state
+    # from the failed call must not have leaked.
+    result = run_query(conn, query, result_shape="paths")
+    assert result.telemetry.peak_buffer_memory_mb > 0

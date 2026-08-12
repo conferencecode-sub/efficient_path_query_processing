@@ -13,11 +13,10 @@ optimized recursive SQL that early-filters "doomed" paths during exploration.
 - **`new_compiler_requirements/compiler_reqs.md`** -- the functional
   requirements spec the compiler is built against; each requirement traces
   to the reviewer concern it answers (Section 11). (This folder was
-  `requirements/` until 2026-08-07.) The same folder also has
-  `recap_compiler_requirements_FULL.md`, a newer draft with two differences:
-  it un-demotes the negative-stability verifier (Module H) back into the
-  main spec, and it adds an all-new optional Part II (Module J: LLM-assisted
-  selective-aggregate authoring) -- not yet reconciled with `compiler_reqs.md`.
+  `requirements/` until 2026-08-07.) Part I only -- an optional LLM-assisted
+  selective-aggregate authoring module (Part II, Module J) was designed,
+  built, and live-tested, then removed per explicit decision (2026-08-11);
+  see `compiler/CHECKLIST.md` for that history.
 - **`info_background/`** -- the paper (`Efficient_Path_Query_Processing_RelDBMS-2.pdf`)
   and the Round-2 reviews + author feedback (`new_reviews.pdf`).
 - **`old_requirements/README.md`** -- the old prototype's README (browser UI +

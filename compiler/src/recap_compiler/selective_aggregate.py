@@ -202,6 +202,39 @@ def normalize_update_d_body(body: str, *, declared_keys: list[str]) -> str:
     return tree.sql(dialect="duckdb")
 
 
+def typed_init_d(aggregate: SelectiveAggregate) -> str:
+    """Returns `init_d`'s struct literal with every field explicitly cast to
+    its declared dictionary-key type (`DictionaryKey.sql_type`).
+
+    Without this, a field written as a bare, untyped literal (most commonly
+    `NULL`, e.g. `adjacent_edge_predicate`'s `{last_key: NULL}`) lets DuckDB
+    infer *some* type for the anchor branch of the recursive CTE on its own,
+    independent of what `update_d`'s real values will need -- and it can
+    infer something too narrow (observed: a bare `NULL` inferred as
+    `INTEGER`, then overflowing once real BIGINT epoch-millisecond
+    timestamps flowed through the recursive term -- a real bug an actual
+    user hit via the workbench). Casting to the already-declared type is
+    exactly what that metadata is for; both Stage E (macro body) and Stage F
+    (anchor columns) must use this rather than the raw `init_d`, for the
+    same FR-22-equivalence reason `normalize_update_d_body` needs both call
+    sites: an inconsistently-typed anchor would make the two stages
+    disagree, not just one of them wrong."""
+    if not aggregate.dictionary_keys:
+        return aggregate.init_d
+    try:
+        tree = sqlglot.parse_one(aggregate.init_d, read="duckdb")
+    except sqlglot.errors.ParseError as exc:
+        raise RefError(f"init_d: could not parse expression: {exc}", locus="init_d") from exc
+    if not isinstance(tree, exp.Struct):
+        return aggregate.init_d  # not a struct literal -- nothing to type per-key
+    sql_types = {key.name: key.sql_type for key in aggregate.dictionary_keys}
+    for prop in tree.expressions:
+        key = prop.this.name
+        if key in sql_types:
+            prop.set("expression", exp.Cast(this=prop.expression, to=exp.DataType.build(sql_types[key])))
+    return tree.sql(dialect="duckdb")
+
+
 def _referenced_columns(body: str, *, function_name: str, locus: str) -> list[exp.Column]:
     """Parsed via `sqlglot.parse` (not `parse_one`) so a body written as
     several `;`-separated statements -- `update_d`'s `D.<key> = <expr>`

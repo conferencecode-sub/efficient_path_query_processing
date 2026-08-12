@@ -45,6 +45,7 @@ from .selective_aggregate import (
     SelectiveAggregate,
     TransitionPair,
     normalize_update_d_body,
+    typed_init_d,
 )
 from .transitions import TransitionsRelation
 
@@ -178,7 +179,7 @@ def build_optimized_query(*, aggregate: SelectiveAggregate, relation: Transition
     seed_values = ", ".join(f"({v})" for v in sorted(start_vertices))
     accepting = ", ".join(str(q) for q in sorted(relation.accepting_states))
 
-    init_fields = _decompose_struct(aggregate.init_d) if declared_keys else {}
+    init_fields = _decompose_struct(typed_init_d(aggregate)) if declared_keys else {}
     missing_init = [key for key in declared_keys if key not in init_fields]
     if missing_init:
         # Unlike update_d, there's no previous value to default a missing

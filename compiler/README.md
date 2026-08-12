@@ -173,5 +173,6 @@ custom) can be compiled
 to both unoptimized and optimized SQL, actually run on DuckDB, and driven
 either from a script or a browser UI today, with FR-22 equivalence checked
 directly in tests, the demo script, and the UI. H (the negative-stability
-verifier) and J (LLM-assisted aggregate authoring) remain intentionally
-deferred/optional per the spec -- see `CHECKLIST.md` for what's next.
+verifier) remains intentionally deferred/optional per the spec. An optional
+LLM-assisted aggregate authoring module (J) was built, live-tested, and
+then removed per explicit decision -- see `CHECKLIST.md` for that history.

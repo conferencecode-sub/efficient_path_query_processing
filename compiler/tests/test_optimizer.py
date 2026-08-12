@@ -4,7 +4,7 @@ import pytest
 from recap_compiler.errors import ExecutionError, RefError, UnsupportedError
 from recap_compiler.execution import run_query
 from recap_compiler.optimizer import build_optimized_query
-from recap_compiler.selective_aggregate import DictionaryKey, SelectiveAggregate, bounded_range
+from recap_compiler.selective_aggregate import DictionaryKey, SelectiveAggregate, adjacent_edge_predicate, bounded_range
 from recap_compiler.standard_sql import build_standard_query, materialize_transitions, register_aggregate_macros
 from recap_compiler.transitions import TransitionsRelation
 
@@ -240,3 +240,31 @@ def test_init_d_missing_declared_key_raises_ref_error():
     with pytest.raises(RefError, match="init_d does not initialize declared key.*min_amount"):
         build_optimized_query(aggregate=aggregate, relation=LOOP_RELATION,
                                start_vertices=[1], length_bound=3)
+
+
+# --- regression: a bare `NULL` in init_d must not make DuckDB infer a type
+# too narrow for the real values update_d later produces. A real user hit
+# this via the workbench: adjacent_edge_predicate(property="timestamp_ms")
+# raised "Type INT64 ... can't be cast ... INT32" on real epoch-ms values,
+# because init_d's untyped NULL got inferred as INTEGER for the anchor
+# branch, independent of what the recursive branch would compute. Fixed by
+# `typed_init_d` casting to the declared DictionaryKey.sql_type. -----------
+
+def test_adjacent_edge_predicate_does_not_overflow_on_real_bigint_timestamps():
+    conn = duckdb.connect()
+    conn.execute("CREATE TABLE edges(edge_id INT, src INT, dst INT, label TEXT, timestamp_ms BIGINT)")
+    # The exact value class from the bug report: a real epoch-ms timestamp,
+    # far beyond INT32's ~2.1 billion range.
+    for row in [(1, 1, 2, "purchase", 1665251714000), (2, 2, 3, "purchase", 1665251715000),
+                (3, 3, 4, "purchase", 1665251716000)]:
+        conn.execute("INSERT INTO edges VALUES (?, ?, ?, ?, ?)", row)
+
+    aggregate = adjacent_edge_predicate(property="timestamp_ms")
+    standard, optimized = _both_queries(conn, aggregate, LOOP_RELATION,
+                                         start_vertices=[1], length_bound=3)
+
+    standard_rows = {(v, q, path_length) for v, q, _d, path_length, _r
+                      in conn.execute(standard.sql).fetchall()}
+    optimized_rows = {(v, q, path_length) for v, q, _d, path_length, _r
+                       in conn.execute(optimized.sql).fetchall()}
+    assert standard_rows == optimized_rows == {(1, 0, 0), (2, 0, 1), (3, 0, 2), (4, 0, 3)}

@@ -22,7 +22,14 @@ from dataclasses import dataclass
 import duckdb
 
 from .errors import ExecutionError
-from .selective_aggregate import DICT_ALIAS, EDGE_ALIAS, SelectiveAggregate, TransitionPair, normalize_update_d_body
+from .selective_aggregate import (
+    DICT_ALIAS,
+    EDGE_ALIAS,
+    SelectiveAggregate,
+    TransitionPair,
+    normalize_update_d_body,
+    typed_init_d,
+)
 from .transitions import TransitionsRelation, to_dataframe
 
 MACRO_SIGNATURES = {
@@ -64,7 +71,7 @@ def register_aggregate_macros(conn: duckdb.DuckDBPyConnection, aggregate: Select
     macro body) is converted into an equivalent struct literal (valid)."""
     declared_keys = [key.name for key in aggregate.dictionary_keys]
 
-    conn.execute(f"CREATE OR REPLACE MACRO init_d() AS ({aggregate.init_d})")
+    conn.execute(f"CREATE OR REPLACE MACRO init_d() AS ({typed_init_d(aggregate)})")
     conn.execute(f"CREATE OR REPLACE MACRO is_viable_d_final(D) AS ({aggregate.is_viable_d_final})")
     conn.execute(f"CREATE OR REPLACE MACRO finalize_d(D) AS ({aggregate.finalize_d})")
 
