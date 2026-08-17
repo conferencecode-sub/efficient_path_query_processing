@@ -1,0 +1,6 @@
+engine,length,result,runtime_ms
+duckdb-baseline,2,34,34.26
+duckdb-baseline,3,1666,29.20
+duckdb-baseline,4,52508,175.27
+duckdb-baseline,5,2743095,5353.74
+duckdb-baseline,6,115732791,245179.92

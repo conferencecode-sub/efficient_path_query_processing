@@ -1,0 +1,6 @@
+engine,query,start,len,success,result,median_ms,avg_ms,min_ms,max_ms,intermediate_paths,peak_memory_mb,error
+memgraph,q3,31470,2,1,17,2.184450626373291,2.184450626373291,2.184450626373291,2.184450626373291,544,1693.696,
+memgraph,q3,31470,3,1,20,70.10821998119354,70.10821998119354,70.10821998119354,70.10821998119354,39509,1311.744,
+memgraph,q3,31470,4,1,36,22153.15532684326,22153.15532684326,22153.15532684326,22153.15532684326,10875339,1019.0,
+memgraph,q3,31470,5,1,38,2977664.72440958,2977664.72440958,2977664.72440958,2977664.72440958,1315723567,1022.0,
+memgraph,q3,31470,6,0,,,,,,,,{neo4j_code: Memgraph.TransientError.MemgraphError.MemgraphError} {message: Transaction was asked to abort because of transaction timeout.} {gql_status: 50N42} {gql_status_description: error: general processing exception - unexpected error. Transaction was asked to abort because of transaction timeout.}

@@ -1,0 +1,33 @@
+Connecting to Memgraph at bolt://localhost:7688...
+Clearing database...
+Loading FinBench SF1 data...
+  loaded 80,464 nodes
+  [transfer] 164,434 edges loaded
+  [withdraw] 334,266 edges loaded
+  [deposit] 85,341 edges loaded
+  [own] 21,880 edges loaded
+  [signedInBy] 4,588 edges loaded
+[memgraph] tcr1 len=2: result=184 expected=184 match=True time=5.5ms
+[memgraph] tcr1 len=3: result=327 expected=327 match=True time=7.4ms
+[memgraph] tcr1 len=4: result=338 expected=338 match=True time=18.5ms
+[memgraph] tcr1 len=5: result=340 expected=340 match=True time=50.2ms
+[memgraph] tcr1 len=6: result=340 expected=340 match=True time=381.8ms
+[memgraph] tcr1 len=7: result=340 expected=340 match=True time=1359.8ms
+[memgraph] tcr1 len=8: result=340 expected=340 match=True time=5791.4ms
+wrote 7 rows to ~/ReCAP_Compiler/experiments/e6_finbench_sf1/results/memgraph_tcr1.csv
+[memgraph] tcr5 len=2: result=950 expected=950 match=True time=4.7ms
+[memgraph] tcr5 len=3: result=2620 expected=2620 match=True time=9.5ms
+[memgraph] tcr5 len=4: result=4625 expected=4625 match=True time=36.2ms
+[memgraph] tcr5 len=5: result=6346 expected=6346 match=True time=132.5ms
+[memgraph] tcr5 len=6: result=6489 expected=6489 match=True time=370.5ms
+[memgraph] tcr5 len=7: result=6489 expected=6489 match=True time=920.2ms
+[memgraph] tcr5 len=8: result=6489 expected=6489 match=True time=2223.3ms
+wrote 7 rows to ~/ReCAP_Compiler/experiments/e6_finbench_sf1/results/memgraph_tcr5.csv
+[memgraph] tcr8 len=2: result=2899 expected=2899 match=True time=7.4ms
+[memgraph] tcr8 len=3: result=17533 expected=17533 match=True time=90.8ms
+[memgraph] tcr8 len=4: result=45014 expected=45014 match=True time=682.4ms
+[memgraph] tcr8 len=5: result=104274 expected=104274 match=True time=6427.9ms
+[memgraph] tcr8 len=6: result=194680 expected=194680 match=True time=60006.9ms
+[memgraph] tcr8 len=7: result=319724 expected=319724 match=True time=649213.6ms
+[memgraph] tcr8 len=8: result=533278 expected=533278 match=True time=6842622.1ms
+wrote 7 rows to ~/ReCAP_Compiler/experiments/e6_finbench_sf1/results/memgraph_tcr8.csv

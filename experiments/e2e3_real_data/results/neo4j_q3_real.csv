@@ -1,0 +1,6 @@
+engine,query,start,len,success,result,median_ms,avg_ms,min_ms,max_ms,intermediate_paths,peak_memory_mb,error
+neo4j,q3,31470,2,1,17,338.0652666091919,338.0652666091919,338.0652666091919,338.0652666091919,544,14527.623168,
+neo4j,q3,31470,3,1,20,411.5117937326431,411.5117937326431,411.5117937326431,411.5117937326431,39509,14527.623168,
+neo4j,q3,31470,4,1,36,26380.58604300022,26380.58604300022,26380.58604300022,26380.58604300022,10875339,14527.93856,
+neo4j,q3,31470,5,1,38,4207017.562553287,4207017.562553287,4207017.562553287,4207017.562553287,1315723567,14310.940672,
+neo4j,q3,31470,6,0,,,,,,,,"{neo4j_code: Neo.ClientError.Transaction.TransactionTimedOutClientConfiguration} {message: The transaction has been terminated. Retry your operation in a new transaction, and you should see a successful result. The transaction has not completed within the timeout specified at its start by the client. You may want to retry with a longer timeout. } {gql_status: 50N42} {gql_status_description: error: general processing exception - unexpected error. The transaction has been terminated. Retry your operation in a new transaction, and you should see a successful result. The transaction has not completed within the timeout specified at its start by the client. You may want to retry with a longer timeout. }"
