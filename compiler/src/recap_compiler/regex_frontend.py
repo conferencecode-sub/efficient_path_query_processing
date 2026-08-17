@@ -17,9 +17,14 @@ expanded here into pyformlang's native subset before parsing:
   atom{m,n} -> m required copies concatenated with (n-m) copies of (atom|$)
   atom{m,}  -> m required copies concatenated with atom*
 
-Known limitation: labels containing regex metacharacters (`|()*+?{}$.` or
-whitespace) are not escaped/quoted here yet and will confuse the parser --
-tracked as follow-up, not needed for the datasets exercised so far.
+A label containing a regex metacharacter (`|()*+?{}$.`) or whitespace (e.g.
+`North America`) would otherwise confuse the parser -- worse, silently
+rather than with an error: unquoted, `North America` parses as *two*
+concatenated tokens, `North` then `America` (a space is pyformlang's
+concatenation operator), matching a nonexistent two-edge sequence instead
+of the one real edge labeled `North America`. Double-quote such a label
+(`("North America"|Asia)+`) to have it treated as a single atomic token
+regardless of what characters it contains -- see `_extract_quoted_labels`.
 """
 from __future__ import annotations
 
@@ -34,6 +39,33 @@ from .errors import RegexError
 # Matches a bounded-repetition bound, or a single `+` or `?`; `.search()`
 # finds the leftmost one so nested/chained operators expand outside-in.
 _REPEAT_OP = re.compile(r"\{(\d+)(,(\d*))?\}|\+|\?")
+
+_QUOTED_LABEL = re.compile(r'"([^"]*)"')
+# Alnum/underscore only, so both `_atom_span`'s bare-token scan and
+# pyformlang's own tokenizer treat a placeholder exactly like a plain
+# label such as `Europe` -- never split, never confused for an operator.
+_PLACEHOLDER_TEMPLATE = "__RECAP_QUOTED_LABEL_{}__"
+
+
+def _extract_quoted_labels(pattern: str) -> tuple[str, dict[str, str]]:
+    """Replaces every `"..."` span in `pattern` with a synthetic
+    placeholder token before any further parsing, so a label containing a
+    regex metacharacter or whitespace is shielded from being interpreted
+    as one -- it's substituted back into the NFA's transition labels only
+    after Thompson's construction has already run on the placeholder.
+    Returns the rewritten pattern and a `{placeholder: original_label}`
+    map (empty if `pattern` has no quotes)."""
+    if pattern.count('"') % 2 != 0:
+        raise RegexError(f"unbalanced quote (\") in pattern: {pattern!r}", locus=pattern)
+
+    placeholders: dict[str, str] = {}
+
+    def _replace(match: re.Match) -> str:
+        placeholder = _PLACEHOLDER_TEMPLATE.format(len(placeholders))
+        placeholders[placeholder] = match.group(1)
+        return placeholder
+
+    return _QUOTED_LABEL.sub(_replace, pattern), placeholders
 
 
 @dataclass(frozen=True)
@@ -119,21 +151,40 @@ def _expand_postfix_operators(pattern: str) -> str:
         pattern = pattern[:start_atom] + replacement + pattern[match.end():]
 
 
-def compile_regex_to_nfa(pattern: str) -> NFA:
+def compile_regex_to_nfa(pattern: str, *, minimize: bool = False) -> NFA:
     """FR-5..FR-8: parse `pattern` over the edge-label alphabet, build an
     epsilon-NFA via Thompson's construction, and eliminate epsilon
-    transitions. Raises RegexError (E-REGEX) on a malformed pattern."""
-    expanded = _expand_postfix_operators(pattern)
+    transitions. Raises RegexError (E-REGEX) on a malformed pattern.
+
+    FR-7 is explicit that determinization/minimization "may be offered as
+    an optional pass but shall not be the default": non-determinism is
+    handled natively by the recursive join, and *not* collapsing states is
+    what keeps the NFA compatible with wavefront/segment-style planners
+    (R4.O2) -- exactly the property `alternative_explorations/
+    navigation_style_experiment.md` exercises. So `minimize=False` here is
+    the required default, not just a cautious one; pass `minimize=True`
+    only when that compatibility genuinely doesn't matter for the query at
+    hand (e.g. a benchmark measuring standard bottom-up evaluation only).
+    pyformlang's `.minimize()` determinizes internally, so no separate
+    `.to_deterministic()` call is needed."""
+    dequoted, quoted_labels = _extract_quoted_labels(pattern)
+    expanded = _expand_postfix_operators(dequoted)
     try:
         parsed = Regex(expanded)
         epsilon_nfa = parsed.to_epsilon_nfa()
         nfa = epsilon_nfa.remove_epsilon_transitions()
+        if minimize:
+            nfa = nfa.minimize()
     except MisformedRegexError as exc:
         raise RegexError(str(exc), locus=pattern) from exc
+
+    def _label(symbol) -> str:
+        text = str(symbol.value)
+        return quoted_labels.get(text, text)
 
     return NFA(
         states=frozenset(nfa.states),
         start_states=frozenset(nfa.start_states),
         accepting_states=frozenset(nfa.final_states),
-        transitions=tuple((frm, str(sym.value), to) for frm, sym, to in nfa),
+        transitions=tuple((frm, _label(sym), to) for frm, sym, to in nfa),
     )

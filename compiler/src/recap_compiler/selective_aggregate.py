@@ -31,6 +31,7 @@ FR-12.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 import sqlglot
@@ -178,6 +179,32 @@ def _parse_update_d_statements(body: str) -> list[exp.Expression]:
         from (errors[-1] if errors else None)
 
 
+_AUGMENTED_ASSIGNMENT_RE = re.compile(r"(D\.\w+)\s*([+\-*/])=\s*([^;\n]+)")
+
+
+def _expand_augmented_assignments(body: str) -> str:
+    """Rewrites `D.<key> <op>= <expr>` (`op` in `+-*/`) to the equivalent
+    `D.<key> = D.<key> <op> (<expr>)`, textually, before anything is handed
+    to sqlglot. Not a parse-tree transformation, because it can't be one:
+    SQL has no augmented-assignment operator in any dialect, so sqlglot
+    raises immediately on any input containing `+=`/`-=`/`*=`//=` regardless
+    of dialect -- there's no tree to transform, only text to rewrite before
+    a tree can exist at all. A real user reached for `D["total_amounts"] +=
+    e.amount` in the workbench and hit exactly this (confirmed: the error is
+    identical for dot or bracket notation, so it's the operator that's
+    unparseable, not the accessor style).
+
+    Safe as a blind substitution over the whole body: the pattern requires
+    a literal `D.<identifier>` immediately followed by one of `+-*/`
+    immediately followed by `=`, a shape no legitimate SQL construct
+    produces (struct literals never place an operator directly before `=`;
+    `!=`/`<=`/`>=` don't share this prefix)."""
+    def _rewrite(match: re.Match) -> str:
+        lhs, op, rhs = match.group(1), match.group(2), match.group(3).strip()
+        return f"{lhs} = {lhs} {op} ({rhs})"
+    return _AUGMENTED_ASSIGNMENT_RE.sub(_rewrite, body)
+
+
 def normalize_update_d_body(body: str, *, declared_keys: list[str]) -> str:
     """`update_d` accepts a second, equivalent form on top of the struct
     literal: one or more `D.<key> = <expr>` assignment statements, either
@@ -197,12 +224,17 @@ def normalize_update_d_body(body: str, *, declared_keys: list[str]) -> str:
     conversion isn't optional plumbing, it's what makes the second form
     usable at all.
 
+    Also accepts `D.<key> <op>= <expr>` (`+=`/`-=`/`*=`//=`), expanded via
+    `_expand_augmented_assignments` before any parsing is attempted -- see
+    that function's docstring for why this has to be a text rewrite.
+
     A body that's a struct literal, or that parses as a single non-`=`
     statement (bare `D`, or an aggregate with no declared keys), is handled
     exactly as `complete_update_d_body` already does -- unwrapped here only
     far enough to tell which case applies."""
     if not declared_keys:
         return body
+    body = _expand_augmented_assignments(body)
     statements = _parse_update_d_statements(body)
 
     if len(statements) == 1 and isinstance(statements[0], exp.Struct):

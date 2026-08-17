@@ -43,6 +43,7 @@ RESULT_SHAPES = {"paths", "endpoints", "count"}
 class Telemetry:
     intermediate_paths: int
     runtime_ms: float
+    intermediate_count_ms: float
     peak_buffer_memory_mb: float
 
 
@@ -77,22 +78,32 @@ def run_query(conn: duckdb.DuckDBPyConnection, query: StandardQuery | OptimizedQ
     conn.execute("PRAGMA enable_profiling='json'")
     conn.execute(f"PRAGMA profiling_output='{profile_path.as_posix()}'")
 
-    start = time.perf_counter()
     try:
         try:
+            start = time.perf_counter()
             cursor = conn.execute(wrapped)
             rows = cursor.fetchall()
             columns = [d[0] for d in cursor.description]
+            runtime_ms = (time.perf_counter() - start) * 1000
+
             # Every row the recursive member ever produced, before the outer
             # filter -- not recoverable from `query.sql` alone since that's
-            # already the post-filter query. Run while profiling is still
-            # on, so the reported peak accounts for this query too, not
-            # just the first one above.
+            # already the post-filter query. Timed separately from the main
+            # query above: this recount re-executes the same recursive CTE a
+            # second time, so folding its time into `runtime_ms` would
+            # silently double-report "how long the query took" (found via a
+            # benchmark comparing ReCAP-new against a hand-written query that
+            # only runs once -- the two weren't measuring the same thing).
+            # Still run while profiling is on, so the reported peak accounts
+            # for this query too, not just the one above (deliberate: this
+            # recount can peak higher than the filtered query, e.g. when the
+            # outer filter drops almost everything).
+            start2 = time.perf_counter()
             intermediate_paths = conn.execute(
                 f"WITH RECURSIVE {query.cte} SELECT count(*) FROM paths").fetchone()[0]
+            intermediate_count_ms = (time.perf_counter() - start2) * 1000
         except duckdb.Error as exc:
             raise ExecutionError(f"DuckDB failed to run the generated query: {exc}") from exc
-        runtime_ms = (time.perf_counter() - start) * 1000
         peak_buffer_memory_mb = json.loads(profile_path.read_text())["system_peak_buffer_memory"] / 1e6
     finally:
         # Always disable profiling and clean up the temp file, whether the
@@ -105,6 +116,7 @@ def run_query(conn: duckdb.DuckDBPyConnection, query: StandardQuery | OptimizedQ
     return QueryResult(
         rows=rows, columns=columns,
         telemetry=Telemetry(intermediate_paths=intermediate_paths, runtime_ms=runtime_ms,
+                             intermediate_count_ms=intermediate_count_ms,
                              peak_buffer_memory_mb=peak_buffer_memory_mb),
         sql=query.sql,
     )

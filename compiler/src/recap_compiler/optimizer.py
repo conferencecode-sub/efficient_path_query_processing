@@ -180,7 +180,7 @@ def build_optimized_query(*, aggregate: SelectiveAggregate, relation: Transition
         raise ExecutionError("NFA has no accepting states; the query can never match")
 
     declared_keys = [key.name for key in aggregate.dictionary_keys]
-    seed_values = ", ".join(f"({v})" for v in sorted(start_vertices))
+    seed_values = ", ".join(f"({v}::BIGINT)" for v in sorted(start_vertices))
     accepting = ", ".join(str(q) for q in sorted(relation.accepting_states))
 
     init_fields = _decompose_struct(typed_init_d(aggregate)) if declared_keys else {}

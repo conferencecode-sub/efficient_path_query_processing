@@ -66,6 +66,17 @@ def build_transitions_relation(nfa: NFA) -> TransitionsRelation:
         if nfa.start_states & nfa.accepting_states:
             accepting.add(q0)  # some start state already accepts -> so does q0
 
+    # Multiple original start states can share an identical (to, label)
+    # outgoing transition -- unioning them onto q0 above then appends one
+    # row per matching source, i.e. a real duplicate (from, to, label)
+    # tuple, not just a repeated fact. A duplicate row here isn't inert:
+    # the generated SQL joins the edges table against this relation, so a
+    # duplicate transition row makes the recursive CTE match the same real
+    # edge multiple times, multiplying the final path count. `dict.fromkeys`
+    # dedupes while preserving first-occurrence order, keeping NFR-1's
+    # determinism (the input order is itself already deterministic).
+    rows = list(dict.fromkeys(rows))
+
     return TransitionsRelation(rows=tuple(rows), q0=q0, accepting_states=frozenset(accepting))
 
 

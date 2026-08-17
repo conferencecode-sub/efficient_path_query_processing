@@ -124,7 +124,7 @@ def build_standard_query(*, relation: TransitionsRelation, start_vertices: list[
     if not relation.accepting_states:
         raise ExecutionError("NFA has no accepting states; the query can never match")
 
-    seed_values = ", ".join(f"({v})" for v in sorted(start_vertices))
+    seed_values = ", ".join(f"({v}::BIGINT)" for v in sorted(start_vertices))
     accepting = ", ".join(str(q) for q in sorted(relation.accepting_states))
 
     cte = f"""paths AS (

@@ -94,6 +94,47 @@ def test_malformed_regex_raises_regex_error():
     assert exc_info.value.category == "E-REGEX"
 
 
+# --- quoted labels: a label with a space or a regex metacharacter is
+# matched as one atomic token, not split/misinterpreted -------------------
+
+def test_unquoted_multiword_label_silently_splits_into_two_tokens():
+    """Documents the failure mode quoting exists to fix: without quotes, a
+    space is pyformlang's concatenation operator, so "North America"
+    parses as two separate hops, "North" then "America" -- never as a
+    single label, and never with an error either."""
+    nfa = compile_regex_to_nfa("North America")
+    assert _accepts(nfa, ["North", "America"])
+    assert not _accepts(nfa, ["North America"])
+
+
+def test_quoted_label_with_a_space_is_one_atomic_token():
+    nfa = compile_regex_to_nfa('("North America"|Asia)+')
+    assert _accepts(nfa, ["North America"])
+    assert _accepts(nfa, ["Asia", "North America"])
+    assert not _accepts(nfa, ["North", "America"])  # not split into two hops
+
+
+def test_quoted_label_can_contain_regex_metacharacters():
+    nfa = compile_regex_to_nfa('("a|b"|"c+d")+')
+    assert _accepts(nfa, ["a|b"])
+    assert _accepts(nfa, ["c+d"])
+    assert not _accepts(nfa, ["a"])
+    assert not _accepts(nfa, ["b"])
+
+
+def test_quoted_label_works_with_postfix_operators():
+    nfa = compile_regex_to_nfa('"North America"+')
+    assert not _accepts(nfa, [])
+    assert _accepts(nfa, ["North America"])
+    assert _accepts(nfa, ["North America", "North America"])
+
+
+def test_unbalanced_quote_raises_regex_error():
+    with pytest.raises(RegexError) as exc_info:
+        compile_regex_to_nfa('("North America|Asia)+')
+    assert exc_info.value.category == "E-REGEX"
+
+
 def test_q1_style_regex_accepts_grow_then_fraud_only():
     # Matches ReCAP/q1's actual query: (transfer|purchase|sale)+ (phishing|scam)+
     nfa = compile_regex_to_nfa("(transfer|purchase|sale)+ (phishing|scam)+")
@@ -102,3 +143,37 @@ def test_q1_style_regex_accepts_grow_then_fraud_only():
     assert not _accepts(nfa, ["phishing"])  # no grow prefix
     assert not _accepts(nfa, ["transfer"])  # no fraud suffix
     assert not _accepts(nfa, ["phishing", "transfer"])  # wrong order
+
+
+# --- FR-7: minimization is opt-in only, default stays False --------------
+
+def test_minimize_defaults_to_false():
+    """FR-7: preserving the raw (non-minimized) NFA is the required
+    default -- it's what keeps ReCAP compatible with wavefront/segment
+    planners (R4.O2). Q1's own regex is a concrete case where the default
+    produces many more states than the minimal automaton (found via
+    experiments/q1_length_sweep -- see CHECKLIST.md)."""
+    nfa = compile_regex_to_nfa("(transfer|purchase|sale)+(phishing|scam)+")
+    assert len(nfa.states) > 3
+
+
+def test_minimize_true_collapses_to_the_minimal_automaton():
+    nfa = compile_regex_to_nfa("(transfer|purchase|sale)+(phishing|scam)+", minimize=True)
+    assert len(nfa.states) == 3
+    assert len(nfa.start_states) == 1
+    assert len(nfa.accepting_states) == 1
+    assert len(nfa.transitions) == 10
+
+
+def test_minimize_true_preserves_language():
+    unminimized = compile_regex_to_nfa("(transfer|purchase|sale)+(phishing|scam)+")
+    minimized = compile_regex_to_nfa("(transfer|purchase|sale)+(phishing|scam)+", minimize=True)
+    cases = [
+        ["transfer", "phishing"],
+        ["sale", "sale", "scam", "scam"],
+        ["phishing"],
+        ["transfer"],
+        ["phishing", "transfer"],
+    ]
+    for labels in cases:
+        assert _accepts(unminimized, labels) == _accepts(minimized, labels), labels

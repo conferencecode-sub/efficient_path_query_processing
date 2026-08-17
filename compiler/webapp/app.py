@@ -42,6 +42,7 @@ Run with:
 from __future__ import annotations
 
 import os
+import random
 import tempfile
 
 import duckdb
@@ -77,13 +78,21 @@ _NUMERIC_TYPE_MARKERS = ("INT", "FLOAT", "DOUBLE", "DECIMAL", "REAL", "NUMERIC",
 # candidates, since a label regex matches against text values.
 _STRING_TYPE_MARKERS = ("VARCHAR", "TEXT", "STRING", "CHAR", "BLOB")
 _NO_REGEX_OPTION = "(no regex -- explore every edge)"
+_DEFAULT_REGEX = "(transfer|purchase|sale)+(phishing|scam)+"
+# regex_frontend.py doesn't escape/quote label text yet (see its module
+# docstring's "known limitation") -- a label containing any of these, or
+# whitespace, would confuse the parser if spliced straight into a regex.
+_REGEX_METACHARACTERS = set("|()*+?{}$.")
 
 _INTERMEDIATE_PATHS_HELP = (
     "How many rows the recursive query actually produced before the final filter "
     "(reaching an accepting state AND passing is_viable_d_final) was applied -- every "
     "candidate path considered, viable or not. Comparing this between the optimized and "
     "standard queries shows how much the early-pruning check (is_viable_d) actually cut "
-    "the search down, separate from how many paths end up in the final result.")
+    "the search down, separate from how many paths end up in the final result. Computing "
+    "this count re-runs the whole recursive CTE a second time (not recoverable from the "
+    "main query's own result), which is why its own time is reported separately below "
+    "rather than folded into Runtime.")
 _PEAK_MEMORY_HELP = (
     "DuckDB's own peak buffer-memory usage for this connection (via PRAGMA "
     "enable_profiling), in MB. Useful for spotting when a deep length_bound is about to "
@@ -99,6 +108,43 @@ def _is_numeric_type(column_type: str) -> bool:
 
 def _is_string_type(column_type: str) -> bool:
     return any(marker in column_type.upper() for marker in _STRING_TYPE_MARKERS)
+
+
+def _regex_token_for_label(value) -> str | None:
+    """A label containing a regex metacharacter or whitespace (e.g. `North
+    America`) needs `regex_frontend.py`'s double-quote syntax to be
+    matched as one atomic token instead of being silently misparsed --
+    quoted here, not just left bare. Returns `None` for a label
+    containing a literal `"`, since quoting has no escape mechanism for
+    that yet -- such values are excluded from the random example rather
+    than emitting a regex that would fail to parse."""
+    text = str(value)
+    if not text or '"' in text:
+        return None
+    if any(ch in _REGEX_METACHARACTERS or ch.isspace() for ch in text):
+        return f'"{text}"'
+    return text
+
+
+def _random_regex_from_alphabet(alphabet: list) -> str | None:
+    """Builds a plausible example regex out of a label column's *actual*
+    values -- e.g. `(purchase|sale)+("North America")+` -- instead of
+    always prefilling the bundled dataset's own Q1 regex, which means
+    nothing for a column from a different dataset entirely. Returns
+    `None` if nothing usable remains (e.g. every value contains a literal
+    `"`), so the caller can fall back to a plain default instead of
+    generating a broken or empty regex."""
+    safe = sorted({token for v in alphabet if (token := _regex_token_for_label(v)) is not None})
+    if not safe:
+        return None
+    random.shuffle(safe)
+    split = random.randint(1, min(3, len(safe)))
+    first_group, rest = safe[:split], safe[split:]
+    pattern = f"({'|'.join(first_group)})+"
+    if rest:
+        second_group = rest[:random.randint(1, min(2, len(rest)))]
+        pattern += f"({'|'.join(second_group)})+"
+    return pattern
 
 
 def _infer_dictionary_keys(init_d_body: str) -> tuple[DictionaryKey, ...]:
@@ -228,7 +274,14 @@ use_regex = label_column != _NO_REGEX_OPTION
 if use_regex:
     alphabet = _distinct_values(csv_bytes, DEFAULT_DATASET, label_column)
     st.caption(f"label alphabet from '{label_column}' ({len(alphabet)}): {', '.join(map(str, alphabet))}")
-    regex = st.text_input("Label regex", value="(transfer|purchase|sale)+(phishing|scam)+")
+    default_regex = _random_regex_from_alphabet(alphabet) or _DEFAULT_REGEX
+    # An explicit, column-scoped key (not including the random text itself)
+    # keeps this widget's identity stable across reruns -- Streamlit only
+    # applies `value=` the first time a given key appears, so retyping
+    # elsewhere on the page never resets what the user has edited here, but
+    # switching to a different label column (a genuinely new key) gets a
+    # fresh random example drawn from that column's own alphabet.
+    regex = st.text_input("Label regex", value=default_regex, key=f"label_regex::{label_column}")
     try:
         nfa = compile_regex_to_nfa(regex)
         relation = build_transitions_relation(nfa)
@@ -347,7 +400,11 @@ else:
              "e.amount)`, put each assignment on its own line (or separate them with `;` on "
              "one line if you prefer). Either way, you don't have to mention every key from "
              "init_d: leave one out and it automatically keeps its previous value unchanged "
-             "instead of being removed from D.")
+             "instead of being removed from D. Accumulator-style assignments may also use "
+             "`+=`/`-=`/`*=`//=`, e.g. `D.total_amount += e.amount` -- SQL itself has no "
+             "augmented-assignment operator, so this is expanded to the equivalent "
+             "`D.total_amount = D.total_amount + e.amount` before anything else happens to it. "
+             "Only `D.<key>` (dot notation) is recognized, not `D[\"key\"]`.")
     custom_is_viable_d = st.text_area("is_viable_d(D, e)", value=_default_is_viable_d, height=80)
     custom_is_viable_d_final = st.text_area("is_viable_d_final(D)", value=_default_is_viable_d_final,
                                              height=60)
@@ -468,6 +525,8 @@ with col_opt if compare_to_standard else col_std:
     st.metric("Runtime", f"{optimized_result.telemetry.runtime_ms:.1f} ms")
     st.metric("Intermediate paths explored", f"{optimized_result.telemetry.intermediate_paths:,}",
               help=_INTERMEDIATE_PATHS_HELP)
+    st.caption(f"(+{optimized_result.telemetry.intermediate_count_ms:.1f} ms to compute that count, "
+               f"not included in Runtime above)")
     st.metric("Peak DuckDB buffer memory", f"{optimized_result.telemetry.peak_buffer_memory_mb:,.1f} MB",
               help=_PEAK_MEMORY_HELP)
     st.dataframe(_expand_struct_columns(optimized_result).head(200))
@@ -480,6 +539,8 @@ if compare_to_standard:
         st.metric("Runtime", f"{standard_result.telemetry.runtime_ms:.1f} ms")
         st.metric("Intermediate paths explored", f"{standard_result.telemetry.intermediate_paths:,}",
                   help=_INTERMEDIATE_PATHS_HELP)
+        st.caption(f"(+{standard_result.telemetry.intermediate_count_ms:.1f} ms to compute that count, "
+                   f"not included in Runtime above)")
         st.metric("Peak DuckDB buffer memory", f"{standard_result.telemetry.peak_buffer_memory_mb:,.1f} MB",
                   help=_PEAK_MEMORY_HELP)
         st.caption("This connection ran the optimized query first, so this figure is the peak "

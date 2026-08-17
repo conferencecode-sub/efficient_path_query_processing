@@ -99,11 +99,13 @@ def main() -> None:
     assert standard_signature == optimized_signature, "FR-22 violated: results diverged!"
 
     print(f"standard  (Stage E, macros):  {len(standard_result.rows):>7} paths, "
-          f"{standard_result.telemetry.runtime_ms:>7.1f} ms, "
+          f"{standard_result.telemetry.runtime_ms:>7.1f} ms "
+          f"(+{standard_result.telemetry.intermediate_count_ms:.1f} ms for the intermediate-count recount below), "
           f"{standard_result.telemetry.intermediate_paths} intermediate paths explored, "
           f"{standard_result.telemetry.peak_buffer_memory_mb:.1f} MB peak buffer memory")
     print(f"optimized (Stage F, inlined): {len(optimized_result.rows):>7} paths, "
-          f"{optimized_result.telemetry.runtime_ms:>7.1f} ms, "
+          f"{optimized_result.telemetry.runtime_ms:>7.1f} ms "
+          f"(+{optimized_result.telemetry.intermediate_count_ms:.1f} ms for the intermediate-count recount below), "
           f"{optimized_result.telemetry.intermediate_paths} intermediate paths explored, "
           # Same connection ran the standard query first (see execution.py's
           # module docstring) -- this is the peak since then, not isolated.

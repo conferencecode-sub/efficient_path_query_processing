@@ -35,6 +35,23 @@ def _both_queries(conn, aggregate, relation, *, start_vertices, length_bound):
     return standard, optimized
 
 
+def test_optimized_anchor_handles_vertex_ids_beyond_int32_range():
+    """Same BIGINT-anchor regression as standard_sql's own test (found via
+    Datagen-7.7's LDBC-style ids + a small low-degree start vertex) -- the
+    optimized query builds its own separate anchor/VALUES clause, so it
+    needs the same explicit `::BIGINT` cast, not just the standard one."""
+    conn = duckdb.connect()
+    conn.execute("CREATE TABLE edges(edge_id BIGINT, src BIGINT, dst BIGINT, label TEXT, amount DOUBLE)")
+    huge_id = 13194146057717
+    conn.execute("INSERT INTO edges VALUES (1, 3184, ?, 'purchase', 1.0)", [huge_id])
+
+    aggregate = bounded_range(property="amount", upper_bound=100.0)
+    _, optimized = _both_queries(conn, aggregate, LOOP_RELATION, start_vertices=[3184], length_bound=1)
+    rows = conn.execute(optimized.sql).fetchall()
+    reached = {row[0] for row in rows}
+    assert huge_id in reached
+
+
 def test_optimized_sql_has_no_macro_calls():
     conn = _conn_with_edges([(1, 1, 2, "purchase", 10.0)])
     aggregate = bounded_range(property="amount", upper_bound=15.0)

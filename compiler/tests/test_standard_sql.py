@@ -49,6 +49,29 @@ def test_anchor_seeds_every_start_vertex_with_no_undefined_columns(conn):
     assert starts_seen == {1, 4}  # both seeds present, length_bound=0 means no hops taken (path_length starts at 0)
 
 
+def test_anchor_handles_vertex_ids_beyond_int32_range():
+    """A small start-vertex literal (fits INT32) must not narrow the
+    recursive CTE's `v` column to INTEGER when the graph's real vertex ids
+    need BIGINT -- found on Datagen-7.7 (LDBC-style ids up to ~13 trillion)
+    via a low-degree start vertex that happened to be small itself. DuckDB
+    infers a VALUES clause's column type from the literal, so an unqualified
+    `(3184)` anchor would type `v` as INTEGER and then fail to hold a
+    recursively-reached BIGINT destination id."""
+    conn = duckdb.connect()
+    conn.execute("CREATE TABLE edges(edge_id BIGINT, src BIGINT, dst BIGINT, label TEXT)")
+    huge_id = 13194146057717  # exceeds INT32's ~2.1 billion max
+    conn.execute("INSERT INTO edges VALUES (1, 3184, ?, 'purchase')", [huge_id])
+
+    aggregate = SelectiveAggregate(
+        dictionary_keys=(), init_d="NULL", update_d="D", is_viable_d="TRUE",
+        is_viable_d_final="TRUE", finalize_d="D", factorized=True,
+    )
+    query = _run(conn, aggregate, start_vertices=[3184], length_bound=1)
+    rows = conn.execute(query.sql).fetchall()
+    reached = {row[0] for row in rows}
+    assert huge_id in reached
+
+
 def test_bounded_range_aggregate_prunes_the_out_of_range_edge(conn):
     aggregate = bounded_range(property="amount", upper_bound=15.0)
     query = _run(conn, aggregate, start_vertices=[1], length_bound=3)

@@ -288,6 +288,58 @@ def test_normalize_update_d_body_rejects_a_non_assignment_statement_among_severa
             "D.max_amount = e.amount; TRUE", declared_keys=["max_amount", "min_amount"])
 
 
+# --- normalize_update_d_body: augmented assignment (+=/-=/*=//=), expanded
+# to "D.<key> = D.<key> <op> <expr>" before parsing -- SQL has no augmented-
+# assignment operator in any dialect, so this has to be a text rewrite, not
+# a parse-tree one (a real user hit this via `D["total_amounts"] += e.amount`
+# in the workbench; confirmed the error is identical for dot or bracket
+# notation, so it's the operator that's unparseable) ----------------------
+
+@pytest.mark.parametrize("op", ["+", "-", "*", "/"])
+def test_normalize_update_d_body_expands_augmented_assignment(op):
+    normalized = normalize_update_d_body(
+        f"D.total_amount {op}= e.amount", declared_keys=["total_amount"])
+    expected = normalize_update_d_body(
+        f"D.total_amount = D.total_amount {op} (e.amount)", declared_keys=["total_amount"])
+    assert normalized == expected
+
+
+def test_normalize_update_d_body_augmented_assignment_omitted_key_defaults_to_pass_through():
+    normalized = normalize_update_d_body(
+        "D.total_amount += e.amount", declared_keys=["total_amount", "count"])
+    assert "D.count" in normalized  # omitted key defaults to pass-through, same as plain "="
+
+
+def test_normalize_update_d_body_augmented_assignment_semicolon_separated():
+    normalized = normalize_update_d_body(
+        "D.total_amount += e.amount; D.count += 1",
+        declared_keys=["total_amount", "count"])
+    assert "D.total_amount + (e.amount)" in normalized
+    assert "D.count + (1)" in normalized
+
+
+def test_normalize_update_d_body_augmented_assignment_mixed_with_plain_equals():
+    normalized = normalize_update_d_body(
+        "D.total_amount += e.amount\nD.region = e.region",
+        declared_keys=["total_amount", "region"])
+    assert "D.total_amount + (e.amount)" in normalized
+    assert "e.region" in normalized
+
+
+def test_normalize_update_d_body_augmented_assignment_rejects_undeclared_key():
+    with pytest.raises(RefError, match="undeclared dictionary key 'D.bogus'"):
+        normalize_update_d_body("D.bogus += e.amount", declared_keys=["total_amount"])
+
+
+def test_normalize_update_d_body_bracket_notation_still_unsupported():
+    """Scoped deliberately: only dot-notation augmented assignment was
+    requested/implemented. Bracket notation (`D["key"] += expr`) fails the
+    same way it always did -- this test pins that down so a future change
+    doesn't accidentally start silently accepting it half-way."""
+    with pytest.raises(RefError, match="could not parse expression body"):
+        normalize_update_d_body('D["total_amount"] += e.amount', declared_keys=["total_amount"])
+
+
 # --- typed_init_d: casts each field to its declared type, so DuckDB can't
 # independently infer a too-narrow type for the anchor branch of the
 # recursive CTE (a real bug: a bare `NULL` for a last_timestamp_ms key

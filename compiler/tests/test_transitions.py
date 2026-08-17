@@ -60,6 +60,33 @@ def test_multiple_start_states_synthesize_q0_with_unioned_transitions():
     assert relation.accepting_states == frozenset({2, 3})
 
 
+def test_multiple_start_states_sharing_an_outgoing_transition_deduplicate():
+    """Regression test for a real overcounting bug (found 2026-08-13 via
+    experiments/q1_length_sweep, a pilot cross-validating Q1's path counts
+    across independently-built engines): if two different original start
+    states have an *identical* (to, label) outgoing transition, unioning
+    them onto q0 used to append that (q0, to, label) row twice. Since
+    Stage E/F's generated SQL joins `edges` against this relation, a
+    duplicate row there makes the recursive CTE match the same real edge
+    twice, multiplying the final path count -- this NFA shape is exactly
+    what pyformlang produces for Q1's own `(a|b|c)+`-style regex, which is
+    why the existing test suite (all single-start-state or non-overlapping
+    cases) never caught it."""
+    s0, s1, s2 = FakeState(0), FakeState(1), FakeState(2)
+    nfa = NFA(
+        states=frozenset({s0, s1, s2}),
+        start_states=frozenset({s0, s1}),
+        accepting_states=frozenset({s2}),
+        # s0 and s1 both transition to s2 on 'a' -- same (to, label) pair.
+        transitions=((s0, "a", s2), (s1, "a", s2)),
+    )
+    relation = build_transitions_relation(nfa)
+
+    assert relation.q0 == 3
+    assert relation.rows.count((3, 2, "a")) == 1  # not 2
+    assert len(relation.rows) == len(set(relation.rows))  # no duplicates at all
+
+
 def test_q0_accepts_when_a_start_state_already_accepts():
     s0, s1 = FakeState(0), FakeState(1)
     nfa = NFA(

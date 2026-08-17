@@ -29,6 +29,55 @@ but needs E working as its correctness baseline (NFR-2 compares standard vs.
 optimized output), so it comes after E/G. I (the workbench UI) comes last --
 it's glue over an already-working pipeline.
 
+## Experiments-only: UDF-variant ablation (2026-08-16)
+
+**No compiler-source change** -- built entirely under `experiments/`, per
+Stage E's own design: `standard_sql.build_standard_query`'s generated CTE
+calls exactly five fixed names (`init_d`/`update_d`/`is_viable_d`/
+`is_viable_d_final`/`finalize_d`); Stage F (`optimizer.py`) never calls
+them at all (bodies are inlined directly), so swapping *how* those five
+names are registered doesn't touch either stage's own code.
+
+Added `experiments/udf_variant/` (`register_udfs.py` -- a generic
+`register_aggregate_udfs` that installs the five names as real DuckDB
+Python UDFs via `conn.create_function`, with `D` as a JSON string
+(VARCHAR) instead of a native STRUCT, matching the old hand-built
+prototype's own `ReCAP/q1/recap_sql_udfs.py` `py_*` convention; plus
+`q1_udf.py`..`q4_udf.py`, hand-translations of each query's existing SQL
+selective aggregate into the same five Python functions). Wired a
+`--macro-mode {sql,python-udf}` flag into all four `experiments/qN_length_
+sweep/run_new_compiler.py` scripts (default `sql`, unchanged behavior;
+`python-udf` runs the same generated SQL against the new registration
+path, writing to a separate `results/new_compiler_qN_udf.csv` so the
+existing sql-macro results already merged into the paper draft are
+untouched). Purpose: isolate whether the old prototype's 150-346x
+Standard-vs-Optimized speedup is attributable to Python-UDF/JSON-
+marshalling overhead specifically (Stage E's own sql-macro Standard has
+near-zero such overhead, hence the new compiler's much smaller 1.1-2.0x
+gap) rather than hand-tuning vs. automation in general.
+
+Validated: 132 compiler tests still pass unchanged. All four queries
+confirmed triple-agreement (sql-macro standard == python-udf standard ==
+optimized) at short lengths: Q1 23/95/264 (length_bound 2-4, Metaverse),
+Q2 34/1666 (length_bound 2-3, Bitcoin), Q3 6435 (length_bound 2,
+Datagen-7.6), Q4 422 (length_bound 2, LDBC100) -- all match the same
+known-correct counts already established elsewhere in this campaign. Q1
+runtime comparison (sql-macro / python-udf / optimized, ms):
+
+| length_bound | sql-macro | python-udf | optimized | udf/opt | sql/opt |
+|---|---|---|---|---|---|
+| 2 | 43.9 | 252.0 | 22.0 | 11.4x | 2.0x |
+| 3 | 67.9 | 972.7 | 33.3 | 29.2x | 2.0x |
+| 4 | 101.1 | 2269.7 | 53.9 | 42.1x | 1.9x |
+
+The python-udf/optimized ratio grows sharply with length_bound (per-row
+UDF-dispatch + JSON overhead scales with intermediate rows processed)
+while sql-macro/optimized stays flat (~2x) -- directionally confirms the
+JSON/UDF-dispatch theory explains a real, large chunk of the old
+prototype's gap; would need deeper length_bound (matching the old
+prototype's own benchmark depth) to see the ratio approach 150-346x
+directly.
+
 ## Pipeline stages
 
 | # | Stage | Requirements | Status | Completed | Code | Tests |
@@ -365,6 +414,108 @@ now has a well-defined meaning even with no real regex (see
 
 12 new tests total across `test_ingestion.py` (7), `test_standard_sql.py`
 (2), and `test_optimizer.py` (3). 112 tests passing.
+
+## Completed: fixed the "known limitation" -- a quoted label is now one atomic token, not silently split (2026-08-12)
+
+User asked, as a sanity check, whether a multi-word label like `North
+America` would work as one token in a regex like `(North America|Asia)+`.
+Checked empirically before answering (per this project's own established
+practice) rather than trusting the module docstring's existing "known
+limitation" note -- and it's worse than "confuses the parser" suggested:
+it doesn't error, it **silently does the wrong thing**. A bare space is
+pyformlang's concatenation operator, so `North America` parsed as *two*
+separate hops, `North` then `America` -- a real edge labeled `"North
+America"` would just never match, with no error to notice. User asked to
+fix it, not just flag it.
+
+Added double-quote syntax to `regex_frontend.py`:
+`_extract_quoted_labels(pattern)` replaces every `"..."` span with a
+synthetic alnum/underscore-only placeholder (`__RECAP_QUOTED_LABEL_{i}__`)
+*before* `_expand_postfix_operators`/pyformlang ever see the pattern --
+indistinguishable to either from a plain bare label like `Europe`, so
+nothing else in Stage B needed to change, including postfix-operator
+handling (`"North America"+` works with no special-casing). The mapping
+back from placeholder to real label text is applied once, after Thompson's
+construction, when building the final `NFA.transitions` tuple. A quoted
+span may contain *any* character except a literal `"` (no escape
+mechanism for that yet) -- including every regex metacharacter, since the
+placeholder shields the real text from ever being parsed as an operator.
+An odd number of `"` in the pattern raises a clean `RegexError` rather
+than a confusing downstream parse failure.
+
+Verified end to end, not just at the NFA level: built a real
+`TransitionsRelation` from `("North America"|Asia)+`, ran it through
+`register_aggregate_macros`/`build_standard_query` against a real DuckDB
+table with edges labeled `'North America'`, `'Asia'`, and (deliberately)
+just `'North'` -- the query correctly followed the first two and
+correctly ignored the `'North'`-only edge, confirming the quoted label
+round-trips correctly all the way through the join (`t.label = e.label`),
+not just through NFA construction.
+
+5 new tests in `test_regex_frontend.py` (documenting the old silent-split
+failure mode as a test in its own right, then the quoted fix: a space, a
+label containing further metacharacters, a quoted label with a postfix
+`+`, and the unbalanced-quote error) -- 19 cases now, 117 passing total.
+
+**Follow-up in the same pass: the random-regex-example generator
+(`webapp/app.py`, previous entry below) now quotes instead of skipping.**
+It used to filter out any alphabet value containing a metacharacter or
+whitespace before picking a random example -- once quoting existed to
+handle exactly that case, filtering became the wrong behavior (it would
+now silently produce a worse example than necessary, e.g. skipping a
+`North America` value from a real dataset instead of quoting it).
+Replaced `_is_regex_safe_label` with `_regex_token_for_label`, which
+quotes a label needing it and returns the bare label otherwise; a label
+containing a literal `"` is still excluded, since quoting has no escape
+for that. Verified against a mixed alphabet (`North America`, `Asia`,
+`a|b`, `good_label`, and a value with a literal `"`) -- the first three
+appear quoted or bare as needed, the quote-containing one never appears
+in any generated example.
+
+## Completed: picking a label column prefills the regex with a random example drawn from its own alphabet (2026-08-12)
+
+Follow-on to the label-column-picker feature above: the regex field always
+defaulted to the bundled dataset's own Q1 regex
+(`(transfer|purchase|sale)+(phishing|scam)+`), which means nothing once
+the label column is a different column or a different dataset entirely.
+Added `_random_regex_from_alphabet(alphabet)` to `webapp/app.py`: shuffles
+the column's distinct values, splits off a first group of 1-3 for
+`(a|b)+`, and -- if any values remain -- a second group of 1-2 for a
+second `(c)+` clause, mirroring Q1's own two-clause shape. Values
+containing a regex metacharacter or whitespace are filtered out first
+(`_is_regex_safe_label`) -- `regex_frontend.py`'s own module docstring
+already flags that label text isn't escaped/quoted before being spliced
+into a pattern, so an unfiltered value could produce a broken regex.
+Returns `None` if nothing safe remains (empty alphabet, or every value
+unsafe), and the caller falls back to the plain Q1 default in that case.
+
+**Real bug caught before it shipped, not after:** the first version called
+`random.randint(1, ...)` twice in the same expression to compute the
+split point for the two groups -- since each call draws independently,
+this could produce a gap or overlap between the "first group" and "rest"
+slices. Caught by inspection before running anything; fixed by computing
+the split index once and reusing it for both slices. Verified with 20
+generated examples against the real dataset's alphabet (all compiled to
+valid NFAs via `compile_regex_to_nfa`/`build_transitions_relation`) plus
+edge cases: a single-value alphabet (`(only_one)+`, no second clause),
+an empty alphabet (`None`), a mix of safe/unsafe values (unsafe ones
+correctly dropped), and an all-unsafe alphabet (`None`).
+
+**A real, if minor, Streamlit state-management point, not just a styling
+choice:** the `st.text_input` for the regex needs an explicit
+`key=f"label_regex::{label_column}"` -- not because of `st.form`-style
+staleness (that bug class is already handled, see the two entries
+below), but because `value=` is only actually applied by Streamlit the
+first time a given widget key appears; passing a *different* `value=`
+(a new random string) on every rerun would otherwise be silently ignored
+once the widget already exists in session state, which is exactly the
+behavior wanted (typing into the field, or any other widget triggering a
+rerun, must never overwrite what the user is editing) -- but *only* if
+the key stays the same across those reruns. Keying explicitly by
+`label_column` (not by the random text itself) gives both properties at
+once: switching to a different label column is a genuinely new key, so
+it gets a freshly randomized default; anything else happening on the
+page reuses the existing key, so the field is left alone.
 
 ## Completed: `update_d`'s assignment syntax now also accepts one assignment per line (2026-08-12)
 
@@ -898,3 +1049,50 @@ access, not a bare identifier Stage E would otherwise have to rewrite).
   being spliced into the pattern text, so such a label would confuse the
   parser. Not needed for the datasets exercised so far (`ReCAP/simple_dataset`);
   flag if a future dataset's labels need it.
+
+**2026-08-13: two correctness/telemetry fixes found via `experiments/
+q1_length_sweep/` (a pilot cross-validating ReCAP-new against the old
+prototype, Kùzu, and a plain-DuckDB baseline on the same Q1 query).**
+
+- **Real overcounting bug, `transitions.py` (Stage C).** When an NFA has
+  multiple start states (routine for `(a|b|c)+`-shaped regexes, true of
+  Q1's own pattern), synthesizing a single q0 by unioning each start
+  state's outgoing transitions could append the *same* `(q0, to, label)`
+  row more than once, if two different original start states happened to
+  share an identical outgoing transition. A duplicate transition row isn't
+  inert -- the generated SQL joins `edges` against this relation, so a
+  duplicate row makes the recursive CTE match the same real edge multiple
+  times, multiplying the final count. Caught because the pilot's
+  independently-built engines all agreed on 23/95/264 paths while
+  ReCAP-new reported 63/262/733 -- the existing 117-test suite never
+  exercised this NFA shape. Fixed with one line: `rows =
+  list(dict.fromkeys(rows))` before returning `TransitionsRelation`
+  (dedupes, preserves NFR-1 determinism).
+- **`execution.py`'s `Telemetry.runtime_ms` silently included a second
+  query execution.** Computing `intermediate_paths` (FR-26) re-runs the
+  whole recursive CTE a second time; the old code folded that second
+  execution's time into the same `runtime_ms` reported as "how long did
+  the query take," roughly doubling every reported number. Fixed by
+  adding `Telemetry.intermediate_count_ms` as a separate field;
+  `runtime_ms` now times only the main query. `demo_pipeline.py` and
+  `webapp/app.py` both updated to show the recount time separately.
+- **Stage B now supports opt-in NFA minimization, per FR-7's explicit
+  carve-out.** `compile_regex_to_nfa(pattern, *, minimize=False)` --
+  default unchanged (FR-7 requires non-minimization to stay the default,
+  since preserving the raw NFA is what keeps ReCAP compatible with
+  wavefront/segment-style planners, R4.O2), but `minimize=True` is now
+  available for callers (like a benchmark) that only care about standard
+  bottom-up evaluation. pyformlang's `.minimize()` determinizes
+  internally (no separate `.to_deterministic()` needed) and, for Q1's own
+  regex, collapses 36 states/98 transitions down to exactly 3 states/10
+  transitions -- verified language-equivalent via `nfa.is_equivalent_to(...)`
+  and matches the old prototype's hand-designed automaton shape exactly.
+- **Net effect on the "why is ReCAP-new slower than recap-inline"
+  question:** before these fixes, `recap-new-optimized` measured
+  41-104ms across length_bound 2-4 vs. `recap-inline`'s 17-35ms (~2.4-3x).
+  After both fixes, `recap-new-optimized` measures 21-54ms (~1.2-1.55x) --
+  the residual gap is a real, structural cost of keeping Q1's aggregate
+  factorized (automaton-state-agnostic): it has to check `e.label IN
+  (...)` as a string test 4x per row to know normal-vs-fraud, where
+  `recap-inline`'s hand-written query gets that distinction for free via
+  an integer-state `CASE` it already needed anyway.
