@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.DS_Store
+
+# Generated/compiled databases -- large binary artifacts, reproducible from
+# the run scripts in experiments/, not source. Kuzu's single-file DB format
+# means these are plain files, not directories -- no trailing slash.
+*.kuzu
+**/kuzu_db
+**/kuzu_*_db
+
+# Raw and engine-ready graph datasets -- large data dumps (hundreds of MB to
+# multiple GB), reproducible via each dataset's own generator/export script,
+# not source.
+experiments/datasets/
