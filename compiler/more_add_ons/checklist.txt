@@ -1,0 +1,12 @@
+Compiler:
+- for regex: 
+    - Maybe add a small example for the user to understand the symbols: |, concatenation, {n,m}. It could be in a bubble or below the regex box if the user opts to write one.
+- for starting vertex:
+    - have a version where to write multiple, we separate them with a ;. 
+    - If empty (or maybe as dropdown), have a start from everywhere (all unique src from the Edges table)
+- for selective aggregates:
+    - could we remove the factorized only label? Just say custom or something?
+    - Each function should have a mini description on what it does + 2 small examples to guide the user (maybe in the bubble).
+    - have a merge function box (although not assembled into query) below the update_d, which takes to dictionaries as parameters (D1, D2).
+    - is there a way of doing multiple? For example, we could start with the pre-built ones: How would I add both the max-min and trail?
+
