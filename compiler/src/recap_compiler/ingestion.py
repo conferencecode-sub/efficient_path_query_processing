@@ -168,20 +168,31 @@ def load_graph(conn: duckdb.DuckDBPyConnection, edges_source: str,
 def select_start_vertices(handle: GraphHandle, *, ids: list[int] | None = None,
                            predicate: str | None = None,
                            degree_band: str | None = None) -> list[int]:
-    """FR-4: select start vertices by exactly one of an explicit id list, a
-    SQL predicate over vertex properties, or an out-degree quantile band
-    (`'low'` <25%, `'medium'` 25-75%, `'high'` >75%)."""
+    """FR-4: select start vertices by an explicit id list, a SQL predicate
+    over vertex properties, or an out-degree quantile band (`'low'` <25%,
+    `'medium'` 25-75%, `'high'` >75%). At most one of these may be given.
+
+    **Amended (FR-4, 2026-08-17):** if none is given, every distinct `src`
+    value in the Edges table is used (the all-vertices default) -- not
+    every vertex in `nodes`, since a vertex with no outgoing edges has no
+    path to explore from and would just be a pointless start."""
     conn = handle.conn
     given = [name for name, value in
              (("ids", ids), ("predicate", predicate), ("degree_band", degree_band))
              if value is not None]
-    if len(given) != 1:
+    if len(given) > 1:
         raise IngestionError(
-            "select_start_vertices requires exactly one of ids/predicate/degree_band, "
-            f"got: {given or 'none'}")
+            "select_start_vertices accepts at most one of ids/predicate/degree_band, "
+            f"got: {given}")
 
     if ids is not None:
         return sorted(ids)
+
+    if not given:
+        rows = conn.execute(
+            f"SELECT DISTINCT src FROM {handle.edges_table} ORDER BY src"
+        ).fetchall()
+        return [row[0] for row in rows]
 
     if predicate is not None:
         rows = conn.execute(

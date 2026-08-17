@@ -473,3 +473,76 @@ def bounded_range(*, property: str, upper_bound: float) -> SelectiveAggregate:
                       f"LEAST(D.{min_key}, e.{property}) <= {upper_bound}"),
         factorized=True,
     )
+
+
+def _struct_literal_body(body: str, *, function_name: str) -> str:
+    stripped = body.strip()
+    if not (stripped.startswith("{") and stripped.endswith("}")):
+        raise RefError(
+            f"combine_library_aggregates only supports {function_name} bodies written as a "
+            f"single struct literal, got: {body!r}", locus=function_name)
+    return stripped[1:-1].strip()
+
+
+def combine_library_aggregates(*aggregates: SelectiveAggregate) -> SelectiveAggregate:
+    """FR-34: combine two or more **factorized** selective aggregates (e.g.
+    two FR-13 library entries, such as `bounded_range(...)` and
+    `trail_via_edge_ids()`) into one, for a single query that needs several
+    negatively-stable constraints simultaneously.
+
+    - `init_d`/`update_d`: the union of the entries' struct-literal
+      fields -- each entry's own keys evolve independently, since the
+      library's `update_d` bodies never reference another entry's key.
+    - `is_viable_d`/`is_viable_d_final`: the conjunction (`AND`) of the
+      entries' own predicates -- a combined path is viable only if every
+      constituent constraint still is.
+    - `finalize_d`: always `"D"` (the whole combined dictionary), matching
+      every library entry's own default.
+
+    Raises `RefError` (E-REF) if two entries declare a dictionary key of
+    the same name (this happens in practice only when the same library
+    function is combined with itself, or with another entry, using the
+    same distinguishing parameter -- e.g. two `adjacent_edge_predicate`
+    calls on the same property) -- the author should pick a different
+    parameter for one of them rather than have the combination silently
+    pick a winner. Only factorized entries are supported; combining
+    non-factorized (per-NFA-transition) aggregates is out of scope here."""
+    if len(aggregates) < 2:
+        raise RefError("combine_library_aggregates requires at least 2 aggregates, "
+                        f"got {len(aggregates)}")
+    non_factorized = [i for i, agg in enumerate(aggregates) if not agg.factorized]
+    if non_factorized:
+        raise RefError(
+            "combine_library_aggregates only supports factorized aggregates; "
+            f"aggregate(s) at position(s) {non_factorized} are non-factorized",
+            locus="combine_library_aggregates")
+
+    owner_of: dict[str, int] = {}
+    combined_keys: list[DictionaryKey] = []
+    for idx, agg in enumerate(aggregates):
+        for key in agg.dictionary_keys:
+            if key.name in owner_of:
+                raise RefError(
+                    f"dictionary key '{key.name}' is declared by both aggregate "
+                    f"{owner_of[key.name]} and aggregate {idx} -- use a different "
+                    "distinguishing parameter for one of them", locus=key.name)
+            owner_of[key.name] = idx
+            combined_keys.append(key)
+
+    combined_init_d = "{" + ", ".join(
+        _struct_literal_body(agg.init_d, function_name="init_d") for agg in aggregates) + "}"
+    combined_update_d = "{" + ", ".join(
+        _struct_literal_body(agg.update_d, function_name="update_d") for agg in aggregates) + "}"
+    combined_is_viable_d = " AND ".join(f"({agg.is_viable_d})" for agg in aggregates)
+    final_predicates = [agg.is_viable_d_final for agg in aggregates if agg.is_viable_d_final != "TRUE"]
+    combined_is_viable_d_final = " AND ".join(f"({p})" for p in final_predicates) or "TRUE"
+
+    return SelectiveAggregate(
+        dictionary_keys=tuple(combined_keys),
+        init_d=combined_init_d,
+        update_d=combined_update_d,
+        is_viable_d=combined_is_viable_d,
+        is_viable_d_final=combined_is_viable_d_final,
+        finalize_d="D",
+        factorized=True,
+    )

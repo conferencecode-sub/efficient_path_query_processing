@@ -29,6 +29,55 @@ but needs E working as its correctness baseline (NFR-2 compares standard vs.
 optimized output), so it comes after E/G. I (the workbench UI) comes last --
 it's glue over an already-working pipeline.
 
+## Completed: FR-34..FR-39, the workbench UI checklist (2026-08-17)
+
+Implements the six requirements added to `new_compiler_requirements/
+compiler_reqs.md` (and its `CHANGELOG.md`) earlier the same day, from a
+query-author UI checklist (`compiler/more_add_ons/checklist.txt`). Note
+the FR-34..39 numbers here are unrelated to the old, since-removed Module J
+draft's FR-34..43 (see "Module J" below, dated 2026-08-11) -- those numbers
+were freed when Module J was removed and have been reused for this
+unrelated work; `compiler_reqs.md` itself has no trace of Module J left.
+
+- **FR-34** (`selective_aggregate.py`): new `combine_library_aggregates(*aggregates)`
+  -- unions dictionary keys (rejects same-name collisions via `RefError`/E-REF),
+  conjoins `is_viable_d`/`is_viable_d_final`, keeps each entry's own
+  `init_d`/`update_d` logic on its own keys. Factorized-only. 7 new tests
+  in `test_selective_aggregate.py`.
+- **FR-4 amendment + FR-37** (`ingestion.py`, `webapp/app.py`): `select_start_vertices`
+  now defaults to every distinct `src` in Edges when none of ids/predicate/
+  degree_band is given (was previously a required-exactly-one error);
+  the workbench's start-vertex text input accepts `;`-separated ids and
+  maps an empty value to this new default. 1 test changed (behavior
+  intentionally changed), 1 new test added in `test_ingestion.py`.
+- **FR-35** (`webapp/app.py`): a `D1`/`D2`/`merge(D1, D2)` text-area expander,
+  explicitly labeled "sketch only -- not run" -- authoring aid, not wired
+  into Stage E/F, per Section 12 non-goal 3.
+- **FR-36** (`webapp/app.py`): a regex-syntax-help expander next to the
+  regex input, covering `|`, concatenation, `*`, `+`, `?`, `{m,n}`, and
+  quoted labels.
+- **FR-38** (`webapp/app.py`, presentation only): dropped "(factorized
+  only)"/"Factorized only:" from the two places the workbench showed that
+  word to the author; radio option renamed "Custom aggregate" ->
+  "Custom aggregate". No behavior change -- `factorized=True` is still
+  set internally (FR-12/FR-21 untouched).
+- **FR-39** (`webapp/app.py`): added a `help=` tooltip (role + >=2 worked
+  examples) to `is_viable_d`, `is_viable_d_final`, and `finalize_d`, which
+  previously had none at all; expanded `init_d`/`update_d`'s existing
+  tooltips to the same role+examples shape.
+- The FR-13 library picker became a `st.multiselect` (was `st.selectbox`)
+  so more than one kind can be picked and combined via FR-34 above; each
+  picked kind renders its own parameter widgets with kind-scoped keys.
+
+Validated two ways: `pytest` (140 passed, up from 132 -- 8 new, 0 broken),
+and `streamlit.testing.v1.AppTest` driving the actual workbench headlessly
+(no browser available in this environment) through every new path --
+single library aggregate, FR-34's two-aggregate combination (confirmed a
+real FR-22 PASS, not just "no exception"), FR-37's `;`-list, FR-4's
+empty-input all-vertices default (1,161 vertices, correctly capped to 5),
+custom-aggregate mode, degree-band mode, and the invalid-input error
+message path.
+
 ## Experiments-only: UDF-variant ablation (2026-08-16)
 
 **No compiler-source change** -- built entirely under `experiments/`, per

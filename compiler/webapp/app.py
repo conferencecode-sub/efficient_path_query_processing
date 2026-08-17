@@ -60,6 +60,7 @@ from recap_compiler.selective_aggregate import (
     SelectiveAggregate,
     adjacent_edge_predicate,
     bounded_range,
+    combine_library_aggregates,
     trail_via_edge_ids,
     validate_selective_aggregate,
 )
@@ -68,7 +69,8 @@ from recap_compiler.transitions import build_transitions_relation, trivial_relat
 
 DEFAULT_DATASET = os.path.join(
     os.path.dirname(__file__), "..", "..", "ReCAP", "simple_dataset", "LG.csv")
-DEGREE_BAND_CAP = 5  # keep the demo responsive; a degree band can return ~200 vertices
+MANY_START_VERTICES_CAP = 5  # keep the demo responsive; a degree band or the FR-4
+                              # all-vertices default can return hundreds of vertices
 EDGE_PREVIEW_ROWS = 10
 
 # Substrings of DuckDB type names (from DESCRIBE) that indicate a numeric
@@ -282,6 +284,17 @@ if use_regex:
     # switching to a different label column (a genuinely new key) gets a
     # fresh random example drawn from that column's own alphabet.
     regex = st.text_input("Label regex", value=default_regex, key=f"label_regex::{label_column}")
+    with st.expander("Regex syntax help (FR-36)"):
+        st.markdown(
+            "- `|` union -- `a|b` matches label `a` or label `b`\n"
+            "- concatenation (write atoms next to each other) -- `ab` matches `a` then `b`\n"
+            "- `*` zero or more -- `a*` matches zero or more `a` edges in a row\n"
+            "- `+` one or more -- `a+` matches one or more `a` edges in a row\n"
+            "- `?` optional -- `a?` matches zero or one `a` edge\n"
+            "- `{m,n}` bounded repetition -- `a{2,3}` matches 2 or 3 `a` edges in a row\n"
+            "- `\"...\"` quote a label containing a metacharacter or whitespace as one token "
+            "-- e.g. `(\"North America\"|Asia)+`\n\n"
+            f"Example from this dataset's own alphabet: `{default_regex}`")
     try:
         nfa = compile_regex_to_nfa(regex)
         relation = build_transitions_relation(nfa)
@@ -295,13 +308,17 @@ else:
     relation = None
 
 st.header("3. Start vertices and length bound")
-start_mode = st.radio("Start vertices", ["Specific vertex id", "Out-degree band"], horizontal=True)
-if start_mode == "Specific vertex id":
-    start_vertex_id = st.number_input("Start vertex id", value=383, step=1)
+start_mode = st.radio("Start vertices", ["Explicit vertex id(s)", "Out-degree band"], horizontal=True)
+if start_mode == "Explicit vertex id(s)":
+    start_vertex_ids_text = st.text_input(
+        "Start vertex id(s)", value="383",
+        help="One id, or several separated by `;` (e.g. `383;12;97`) (FR-37). Leave empty to "
+             "start from every distinct src vertex in the Edges table instead (FR-4's "
+             "all-vertices default).")
     degree_band = None
 else:
     degree_band = st.selectbox("Out-degree band", ["low", "medium", "high"], index=2)
-    start_vertex_id = None
+    start_vertex_ids_text = None
 
 length_bound = st.number_input("Length bound", min_value=0, max_value=20, value=3, step=1,
                                 help="Max number of edges in a path (path_length starts at 0, "
@@ -324,36 +341,57 @@ _default_property = ("amount" if "amount" in numeric_property_candidates
 
 aggregate_source = st.radio(
     "Aggregate source",
-    ["Library aggregate (FR-13)", "Custom aggregate (factorized only)"],
+    ["Library aggregate(s) (FR-13)", "Custom aggregate"],
     horizontal=True)
 
-if aggregate_source == "Library aggregate (FR-13)":
-    aggregate_kind = st.selectbox(
-        "Aggregate",
+selected_library_aggregates: list[SelectiveAggregate] = []
+
+if aggregate_source == "Library aggregate(s) (FR-13)":
+    aggregate_kinds = st.multiselect(
+        "Aggregate(s) -- pick more than one to combine them into one query (FR-34), "
+        "e.g. bounded range + trail",
         ["Bounded range (max - min <= U)", "Adjacent-edge predicate", "Trail (no repeated edges)"],
-    )
-    if aggregate_kind in ("Bounded range (max - min <= U)", "Adjacent-edge predicate"):
-        if not numeric_property_candidates:
-            st.warning("No numeric edge columns found -- this aggregate needs one "
-                       "(GREATEST/LEAST/subtraction don't apply to text columns).")
-            st.stop()
-        agg_property = st.selectbox(
-            "Property", numeric_property_candidates,
-            help="Only numeric columns are offered -- this aggregate does arithmetic "
-                 "(max/min/subtraction) on the property, which isn't meaningful for text.")
-        if aggregate_kind == "Bounded range (max - min <= U)":
-            upper_bound = st.number_input("Upper bound U", value=500.0)
+        default=["Bounded range (max - min <= U)"],
+        help="Combining takes the union of the picked aggregates' dictionary keys and the "
+             "conjunction of their viability checks -- a path must satisfy all of them. Picking "
+             "the same kind twice isn't supported here (its dictionary keys would collide); use "
+             "distinct properties across different kinds instead.")
+    if not aggregate_kinds:
+        st.warning("Pick at least one library aggregate.")
+        st.stop()
+    for kind in aggregate_kinds:
+        st.markdown(f"**{kind}**")
+        if kind in ("Bounded range (max - min <= U)", "Adjacent-edge predicate"):
+            if not numeric_property_candidates:
+                st.warning("No numeric edge columns found -- this aggregate needs one "
+                           "(GREATEST/LEAST/subtraction don't apply to text columns).")
+                st.stop()
+            kind_property = st.selectbox(
+                "Property", numeric_property_candidates, key=f"property::{kind}",
+                help="Only numeric columns are offered -- this aggregate does arithmetic "
+                     "(max/min/subtraction) on the property, which isn't meaningful for text.")
+            if kind == "Bounded range (max - min <= U)":
+                kind_upper_bound = st.number_input(
+                    "Upper bound U", value=500.0, key=f"upper_bound::{kind}")
+                selected_library_aggregates.append(
+                    bounded_range(property=kind_property, upper_bound=kind_upper_bound))
+            else:
+                kind_comparator = st.selectbox(
+                    "Comparator (edge vs. last edge)", [">=", "<="], index=0,
+                    key=f"comparator::{kind}")
+                selected_library_aggregates.append(
+                    adjacent_edge_predicate(property=kind_property, comparator=kind_comparator))
         else:
-            comparator = st.selectbox("Comparator (edge vs. last edge)", [">=", "<="], index=0)
-    else:
-        id_column = st.selectbox("Edge id column", edge_columns,
-                                  index=edge_columns.index("edge_id") if "edge_id" in edge_columns else 0,
-                                  help="Any column works here -- trail semantics only need "
-                                       "equality, not order, so text ids are fine too.")
+            kind_id_column = st.selectbox(
+                "Edge id column", edge_columns, key=f"id_column::{kind}",
+                index=edge_columns.index("edge_id") if "edge_id" in edge_columns else 0,
+                help="Any column works here -- trail semantics only need "
+                     "equality, not order, so text ids are fine too.")
+            selected_library_aggregates.append(trail_via_edge_ids(id_column=kind_id_column))
 else:
-    st.caption("Factorized only: the body doesn't depend on NFA state, so there's one expression "
-               "per function, not one per transition pair (Q1's regex alone has 100+ pairs -- see "
-               "CHECKLIST.md for why per-transition editing isn't offered here).")
+    st.caption("One expression per function (not one per transition pair -- Q1's regex alone "
+               "has 100+ pairs, see CHECKLIST.md for why per-transition editing isn't offered "
+               "here).")
     st.caption("Convention: `D.<key>` for a dictionary field, `e.<column>` for an edge property. "
                "**Dictionary keys are inferred automatically from `init_d`'s own struct literal --"
                "** there's no separate table to keep in sync by hand. Edit `init_d`, and the "
@@ -377,9 +415,13 @@ else:
 
     custom_init_d = st.text_area(
         "init_d()", value=_default_init_d, height=80,
-        help="Nothing is in scope here (no D, no e) -- build the initial dictionary from "
+        help="**Role:** the dictionary's value at the anchor (path length 0), before any edge "
+             "is taken. Nothing is in scope here (no `D`, no `e`) -- build it from "
              "literals/constants only. Its keys and their types (shown below) are inferred "
-             "directly from this struct literal, e.g. `{k: 0.0}` declares one DOUBLE key `k`.")
+             "directly from this struct literal.\n\n"
+             "**Examples:** `{last_time: NULL}` (one nullable DOUBLE key); "
+             "`{max_amt: -1e308, min_amt: 1e308}` (two DOUBLE keys, seeded so the first real "
+             "edge always widens the range).")
 
     try:
         dictionary_keys = _infer_dictionary_keys(custom_init_d)
@@ -395,20 +437,52 @@ else:
 
     custom_update_d = st.text_area(
         "update_d(D, e)", value=_default_update_d, height=80,
-        help="Two accepted forms: a struct literal `{key: expr, ...}`, or one or more "
-             "`D.<key> = <expr>` assignments -- e.g. `D.max_amount = GREATEST(D.max_amount, "
-             "e.amount)`, put each assignment on its own line (or separate them with `;` on "
-             "one line if you prefer). Either way, you don't have to mention every key from "
-             "init_d: leave one out and it automatically keeps its previous value unchanged "
-             "instead of being removed from D. Accumulator-style assignments may also use "
-             "`+=`/`-=`/`*=`//=`, e.g. `D.total_amount += e.amount` -- SQL itself has no "
-             "augmented-assignment operator, so this is expanded to the equivalent "
-             "`D.total_amount = D.total_amount + e.amount` before anything else happens to it. "
-             "Only `D.<key>` (dot notation) is recognized, not `D[\"key\"]`.")
-    custom_is_viable_d = st.text_area("is_viable_d(D, e)", value=_default_is_viable_d, height=80)
-    custom_is_viable_d_final = st.text_area("is_viable_d_final(D)", value=_default_is_viable_d_final,
-                                             height=60)
-    custom_finalize_d = st.text_area("finalize_d(D)", value=_default_finalize_d, height=60)
+        help="**Role:** how `D` changes when extending a path by one edge `e`. Two accepted "
+             "forms: a struct literal `{key: expr, ...}`, or one or more `D.<key> = <expr>` "
+             "assignments, one per line (or separated by `;` on one line). Either way, you "
+             "don't have to mention every key from `init_d`: leave one out and it automatically "
+             "keeps its previous value unchanged instead of being removed from `D`. "
+             "Accumulator-style assignments may also use `+=`/`-=`/`*=`//=` (expanded to the "
+             "equivalent `D.key = D.key <op> (expr)` before anything else happens to it). Only "
+             "`D.<key>` (dot notation) is recognized, not `D[\"key\"]`.\n\n"
+             "**Examples:** `{last_time: e.time}` (struct form); "
+             "`D.total_amount += e.amount` (assignment form with augmented assignment).")
+    custom_is_viable_d = st.text_area(
+        "is_viable_d(D, e)", value=_default_is_viable_d, height=80,
+        help="**Role:** the early-filtering check (Definition 8) -- a single Boolean "
+             "expression over the dictionary *before* this hop's `update_d` and the "
+             "candidate edge `e`. Returning `FALSE` prunes this extension immediately, before "
+             "it's ever added to the path.\n\n"
+             "**Examples:** `NOT list_contains(D.edge_ids, e.id)` (trail: reject a repeated "
+             "edge); `D.last_time IS NULL OR e.time >= D.last_time` (non-decreasing timestamps).")
+    custom_is_viable_d_final = st.text_area(
+        "is_viable_d_final(D)", value=_default_is_viable_d_final, height=60,
+        help="**Role:** the one-time check applied to a completed path's final `D`, in "
+             "addition to `is_viable_d` having held at every hop -- e.g. a total that can "
+             "only be evaluated once the path is done.\n\n"
+             "**Examples:** `TRUE` (no additional final check, the default); "
+             "`D.total_amount >= 1000` (require a minimum total only at the end).")
+    custom_finalize_d = st.text_area(
+        "finalize_d(D)", value=_default_finalize_d, height=60,
+        help="**Role:** what a matched path actually reports for `D` in the result set -- "
+             "usually the whole dictionary, but it may project down to just the part worth "
+             "returning.\n\n"
+             "**Examples:** `D` (report the whole dictionary, the default); "
+             "`D.edge_ids` (report only the trail, dropping any other tracked keys).")
+
+with st.expander("Merge-function authoring box (FR-35, sketch only -- not run)"):
+    st.caption(
+        "FR-35: sketch how two fragments' dictionaries would compose at a seam (e.g. for a "
+        "split/wavefront-style plan, R4.O2 -- see FR-7 and Section 12 non-goal 3). This is an "
+        "authoring aid only: nothing typed here is parsed, validated, or used by Compile & run "
+        "below -- no split/merge execution plan is generated from it in this revision.")
+    merge_d1 = st.text_area("D1", value="{last_time: NULL}", height=60,
+                             help="Sketch of the first fragment's dictionary shape.")
+    merge_d2 = st.text_area("D2", value="{last_time: NULL}", height=60,
+                             help="Sketch of the second fragment's dictionary shape.")
+    merge_function_body = st.text_area(
+        "merge(D1, D2)", value="{last_time: GREATEST(D1.last_time, D2.last_time)}", height=60,
+        help="Sketch of how D1 and D2 would combine into one dictionary at the seam vertex.")
 
 compare_to_standard = st.checkbox(
     "Also run the unoptimized (Stage E) query, to check it agrees with the optimized one (FR-22)",
@@ -436,13 +510,12 @@ try:
         # goes through the exact same Stage E/F code path as a real regex.
         relation = trivial_relation()
 
-    if aggregate_source == "Library aggregate (FR-13)":
-        if aggregate_kind == "Bounded range (max - min <= U)":
-            aggregate = bounded_range(property=agg_property, upper_bound=upper_bound)
-        elif aggregate_kind == "Adjacent-edge predicate":
-            aggregate = adjacent_edge_predicate(property=agg_property, comparator=comparator)
+    if aggregate_source == "Library aggregate(s) (FR-13)":
+        if len(selected_library_aggregates) == 1:
+            aggregate = selected_library_aggregates[0]
         else:
-            aggregate = trail_via_edge_ids(id_column=id_column)
+            # FR-34: more than one picked above -> combine into one aggregate.
+            aggregate = combine_library_aggregates(*selected_library_aggregates)
     else:
         if dictionary_keys is None:
             st.error("Fix init_d above before running -- its keys couldn't be inferred.")
@@ -477,14 +550,25 @@ try:
         validate_selective_aggregate(aggregate, edge_columns=set(edge_columns))
 
     with timed_stage(breakdown, "A: select start vertices"):
-        if start_vertex_id is not None:
-            starts = select_start_vertices(handle, ids=[int(start_vertex_id)])
+        if start_vertex_ids_text is not None:
+            stripped_ids_text = start_vertex_ids_text.strip()
+            if not stripped_ids_text:
+                starts = select_start_vertices(handle)  # FR-4 all-vertices default
+            else:
+                try:
+                    explicit_ids = [int(piece.strip()) for piece in stripped_ids_text.split(";")
+                                     if piece.strip()]
+                except ValueError:
+                    st.error("Start vertex id(s) must be integers separated by `;` "
+                             "(e.g. `383;12;97`).")
+                    st.stop()
+                starts = select_start_vertices(handle, ids=explicit_ids)
         else:
             starts = select_start_vertices(handle, degree_band=degree_band)
-            if len(starts) > DEGREE_BAND_CAP:
-                st.warning(f"'{degree_band}' band has {len(starts)} vertices; using the first "
-                           f"{DEGREE_BAND_CAP} to keep this responsive.")
-                starts = starts[:DEGREE_BAND_CAP]
+        if len(starts) > MANY_START_VERTICES_CAP:
+            st.warning(f"{len(starts)} start vertices selected; using the first "
+                       f"{MANY_START_VERTICES_CAP} to keep this responsive.")
+            starts = starts[:MANY_START_VERTICES_CAP]
 
     with timed_stage(breakdown, "C: materialize transitions table"):
         materialize_transitions(conn, relation)

@@ -6,6 +6,7 @@ from recap_compiler.selective_aggregate import (
     SelectiveAggregate,
     adjacent_edge_predicate,
     bounded_range,
+    combine_library_aggregates,
     complete_update_d_body,
     generate_skeleton,
     normalize_update_d_body,
@@ -68,6 +69,61 @@ def test_bounded_range_library_entry_matches_worked_maxmin_example():
     assert "89.55" in agg.is_viable_d
     assert "D.max_amount" in agg.is_viable_d and "D.min_amount" in agg.is_viable_d
     validate_selective_aggregate(agg, edge_columns=EDGE_COLUMNS)
+
+
+# --- FR-34: combining multiple library entries -------------------------------
+
+def test_combine_library_aggregates_unions_keys_and_is_still_valid():
+    # The checklist's own example: max-min and trail together.
+    combined = combine_library_aggregates(
+        bounded_range(property="amount", upper_bound=100.0), trail_via_edge_ids())
+    assert {key.name for key in combined.dictionary_keys} == {"max_amount", "min_amount", "edge_ids"}
+    assert combined.factorized is True
+    validate_selective_aggregate(combined, edge_columns=EDGE_COLUMNS)
+
+
+def test_combine_library_aggregates_conjoins_is_viable_d():
+    combined = combine_library_aggregates(
+        bounded_range(property="amount", upper_bound=100.0), trail_via_edge_ids())
+    assert " AND " in combined.is_viable_d
+    assert "D.max_amount" in combined.is_viable_d
+    assert "list_contains(D.edge_ids" in combined.is_viable_d
+
+
+def test_combine_library_aggregates_each_entry_keeps_its_own_update_d_logic():
+    combined = combine_library_aggregates(
+        bounded_range(property="amount", upper_bound=100.0), trail_via_edge_ids())
+    assert "GREATEST(D.max_amount" in combined.update_d
+    assert "list_append(D.edge_ids" in combined.update_d
+
+
+def test_combine_library_aggregates_rejects_duplicate_key_name():
+    with pytest.raises(RefError):
+        combine_library_aggregates(
+            adjacent_edge_predicate(property="time"), adjacent_edge_predicate(property="time"))
+
+
+def test_combine_library_aggregates_rejects_fewer_than_two():
+    with pytest.raises(RefError):
+        combine_library_aggregates(trail_via_edge_ids())
+
+
+def test_combine_library_aggregates_rejects_non_factorized():
+    non_factorized = SelectiveAggregate(
+        dictionary_keys=(), init_d="NULL",
+        update_d={(1, 2): "D"}, is_viable_d={(1, 2): "TRUE"}, factorized=False)
+    with pytest.raises(RefError):
+        combine_library_aggregates(trail_via_edge_ids(), non_factorized)
+
+
+def test_combine_library_aggregates_supports_three_entries():
+    combined = combine_library_aggregates(
+        bounded_range(property="amount", upper_bound=100.0),
+        adjacent_edge_predicate(property="time"),
+        trail_via_edge_ids())
+    assert {key.name for key in combined.dictionary_keys} == {
+        "max_amount", "min_amount", "last_time", "edge_ids"}
+    validate_selective_aggregate(combined, edge_columns=EDGE_COLUMNS)
 
 
 # --- FR-14: reference validation --------------------------------------------
