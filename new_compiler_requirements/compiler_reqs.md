@@ -73,7 +73,7 @@ Every stage's output is inspectable; the generated SQL is a first-class artifact
 
 **FR-3.** The system shall support at least CSV input and shall accept an already-registered DuckDB table by name. Column types shall be inferred, with an option for the author to override the inferred type of any column.
 
-**FR-4.** The system shall let the author select start vertices by explicit id list, by a predicate over vertex properties, or by out-degree quantile band (low `<25%`, medium `25–75%`, high `>75%`) to reproduce the paper's start-vertex methodology.
+**FR-4.** The system shall let the author select start vertices by explicit id list, by a predicate over vertex properties, or by out-degree quantile band (low `<25%`, medium `25–75%`, high `>75%`) to reproduce the paper's start-vertex methodology. **(Amended 2026-08-17, see `CHANGELOG.md`.)** When no explicit selection is given, the system shall default to an **all-vertices** mode: every distinct `src` value in the Edges table is used as a start vertex.
 
 > *Mechanization:* CSV ingestion and type inference are non-novel — use DuckDB's native `read_csv_auto` and load directly into the execution engine, avoiding a separate parsing layer. Out-degree banding is a single SQL aggregate. No custom parser required.
 
@@ -101,11 +101,15 @@ Every stage's output is inspectable; the generated SQL is a first-class artifact
 
 **FR-12.** The system shall generate a **skeleton** for `is_viable_d` and `update_d` as a `CASE` statement over the NFA's actual `(from_state, to_state)` transition pairs, so the author fills in only the transition-specific logic. For a factorized aggregate the author may supply a single unconditional body and the system shall omit the `CASE`.
 
-**FR-13.** The system shall provide a **library of pre-written selective aggregates** for the common negatively-stable patterns named in the paper: (i) adjacent-edge predicate on a maintained last value (Example 7); (ii) trail semantics via a maintained id set (Example 8); (iii) bounded monotone/distributive aggregate such as max−min ≤ U (Example 9). Library entries are parameterized by property name and threshold and are usable directly in factorized cases and as scaffolding in non-factorized ones.
+**FR-13.** The system shall provide a **library of pre-written selective aggregates** for the common negatively-stable patterns named in the paper: (i) adjacent-edge predicate on a maintained last value (Example 7); (ii) trail semantics via a maintained id set (Example 8); (iii) bounded monotone/distributive aggregate such as max−min ≤ U (Example 9). Library entries are parameterized by property name and threshold and are usable directly in factorized cases and as scaffolding in non-factorized ones. Multiple library entries may be combined into a single query's selective aggregate per FR-34.
 
 **FR-14.** The system shall validate that supplied function bodies reference only (a) the dictionary keys they declare, (b) columns present in the edge/vertex schema, and (c) the NFA state variables `q`, `q'`. Unknown references shall be reported per Section 7.
 
-> *Mechanization:* function-body validation is AST-level analysis of SQL expressions — use `sqlglot` to parse each body and resolve identifiers against the known schema and dictionary keys. Skeleton generation is templating over `T` and requires no external library.
+**FR-34 (added 2026-08-17).** The system shall support combining **multiple library entries** (FR-13) into a single selective aggregate for one query — e.g. enabling the bounded max−min aggregate (Example 9) and the trail aggregate (Example 8) simultaneously. Composition shall take the union of the entries' dictionary keys (each key namespaced to its originating entry to avoid collision) and the conjunction of their `is_viable_d`/`is_viable_d_final` predicates; `update_d` and `init_d` shall apply each entry's own logic to its own keys independently. If two composed entries declare conflicting dictionary keys under the same name, the system shall reject the combination per the **E-REF** class (Section 7), naming both entries and the conflicting key.
+
+**FR-35 (added 2026-08-17, workbench-facing; authoring aid only).** The workbench shall provide a **merge-function** input box, taking two dictionary instances `(D1, D2)` as parameters, for the author to sketch how two fragments' selective aggregates would compose at a seam. This is authoring scaffolding only: the merge function is captured and displayed alongside the five Definition-8 functions but is **not** consumed by the Standard SQL generation (E) or Optimization (F) stages in this revision — no split/merge execution plan is generated from it. This is consistent with Section 12 non-goal 3 (the compiler remains *compatible* with segment/wavefront-style planning per FR-7, but does not implement it); the box exists to make that compatibility tangible to the author, not to commit to executing merged plans.
+
+> *Mechanization:* function-body validation is AST-level analysis of SQL expressions — use `sqlglot` to parse each body and resolve identifiers against the known schema and dictionary keys. Skeleton generation is templating over `T` and requires no external library. FR-34's key-namespacing and conflict check are a straightforward extension of the same identifier-resolution pass. FR-35's merge-function box needs no execution-side plumbing since it is not wired into E/F.
 
 ### E. Standard ReCAP SQL generation
 
@@ -147,6 +151,14 @@ Every stage's output is inspectable; the generated SQL is a first-class artifact
 
 **FR-33.** The workbench shall not hard-code any dataset, query, or example. A bundled sample dataset and example query may exist as defaults, but every input shall be replaceable through the UI without code changes. This is the direct structural answer to R2.O1.
 
+**FR-36 (added 2026-08-17).** The regex input control shall display inline help covering, at minimum, the supported operators named in FR-5 (union `|`, concatenation, Kleene `*`/`+`, `?`, bounded repetition `{m,n}`) with a short example of each. The help shall be presented unobtrusively (e.g. a dismissible bubble or text below the input) so it does not require the author to leave the input to consult it, and shall not block entry of a regex while displayed.
+
+**FR-37 (added 2026-08-17).** The start-vertex input control shall accept multiple explicit ids as a single string with ids separated by `;`, mapping to FR-4's "explicit id list" mode. An empty input shall map to FR-4's all-vertices default. Where feasible, the control may additionally offer a dropdown enumerating the degree-band option (FR-4) alongside explicit entry.
+
+**FR-38 (added 2026-08-17, presentation only).** The workbench shall not expose the internal term "factorized" to the author when labeling aggregate-authoring modes; the UI label for the non-`CASE` (state-independent) mode shall use plain wording such as "custom" instead. This is a labeling change only — the underlying factorized/non-factorized distinction (FR-12, FR-21) and its effect on generated SQL are unchanged.
+
+**FR-39 (added 2026-08-17).** For each of the five selective-aggregate functions (`init_d`, `update_d`, `finalize_d`, `is_viable_d`, `is_viable_d_final`), the skeleton-editing UI shall display a short description of the function's role (per Definition 8's signatures) and at least two worked examples, to guide an author unfamiliar with the selective-aggregate model in filling in the skeleton generated by FR-12.
+
 ---
 
 ## 6. Input / output contracts
@@ -158,7 +170,7 @@ Every stage's output is inspectable; the generated SQL is a first-class artifact
 **Query input.**
 - `regex`: string over the label alphabet (FR-5 grammar).
 - `selective_aggregate`: up to five SQL function bodies, or a reference to a library entry with bound parameters.
-- `start`: id list | vertex predicate | degree band.
+- `start`: id list | vertex predicate | degree band | all (default when omitted — every distinct `src` in the Edges table; FR-4).
 - `ell`: non-negative integer length bound.
 - `params`: named constants referenced by the aggregate (e.g. `U`).
 
@@ -243,6 +255,7 @@ A passing run of stages A–G on this instantiation is the acceptance test for t
 | FR-24, FR-26 | R3.O3 (path return + memory cost) |
 | FR-4, FR-1 | R3.O2 (start-vertex methodology; larger-graph runs) |
 | FR-13, FR-12 | R4.O1 (abstraction/library benefit over hand-inlined CTEs) |
+| FR-35 | R4.O2 (further, UI-visible evidence of compatibility with segment/merge-style planners — authoring aid only; see Section 12 non-goal 3 and FR-7) |
 | Section 8 map | meta-crux (3) (compiler versatility across query shapes) |
 | Section 13 (stretch, if pursued) | R2.O3 / R5.O3 (how negative stability could be identified; automation boundary) — only partially served even if implemented, since it checks a supplied encoding rather than discovering one |
 
