@@ -99,8 +99,11 @@ loading the ~76MB dataset).
   transformation step (`transformation/transform.sh`) this session skipped
   (see `experiments/datasets/finbench_sf0.1/README.md`) plus real setup time
   per engine.
-- **TCR8's outer `GROUP BY dst, SUM(...)` aggregation** (the reference
-  query's actual final `RETURN` shape) isn't implemented — only the
-  per-path filtering (trail, window, growth-ratio) that's the part actually
-  relevant to ReCAP's early-filtering story.
+- **TCR8's outer `GROUP BY (loan, distanceFromLoan, dst), SUM(last edge's
+  amount)` aggregation** (the reference query's actual final `RETURN`
+  shape, via a `WITH` clause mixing plain and aggregate expressions --
+  Cypher's implicit-GROUP-BY idiom) isn't implemented anywhere (not by
+  ReCAP, not by `reference_baseline.tcr8_reference`, not as post-
+  processing) — only the per-path filtering (trail, window, growth-ratio)
+  that's the part actually relevant to ReCAP's early-filtering story.
 - Only SF0.1 (smallest available scale factor) — no scale-up attempted.

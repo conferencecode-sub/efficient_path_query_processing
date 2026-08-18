@@ -7,12 +7,20 @@ project, per `ldbc_finbench_transaction_impls/neo4j/queries/tcr-8.cypher`'s
 `reduce(curr = head(amts), x IN tail(amts) | CASE WHEN (curr <> -1) AND
 (x > curr*$threshold) THEN x ELSE -1 end) <> -1`).
 
-The reference query's final step -- `GROUP BY dst, SUM(last edge's amount)`
-across all accepted paths -- sits outside ReCAP's per-path
-`is_viable_d_final` model (it's a cross-path aggregation, not a per-path
-predicate), so it isn't expressed here; `run_tcr8.py` applies it as a plain
-outer `GROUP BY` over ReCAP's raw path output instead. Everything that *is*
-per-path (trail, window, growth-ratio) is fully early-filtered.
+The reference query's final step -- `WITH loan, length(p)+1 AS
+distanceFromLoan, dst, sum(relationships(p)[-1].amount) AS inflow`, i.e. a
+`GROUP BY (loan, distanceFromLoan, dst)` with `SUM(last edge's amount)` as
+the aggregate (not `GROUP BY dst` alone) -- across all accepted paths,
+sits outside ReCAP's per-path `is_viable_d_final` model (it's a cross-path
+aggregation, not a per-path predicate), so it isn't expressed here.
+Corrected (an earlier version of this docstring wrongly claimed
+`run_tcr8.py` applies this `GROUP BY` as post-processing over ReCAP's raw
+path output -- checked directly: it does not, neither does
+`reference_baseline.tcr8_reference`; both simply `COUNT(*)` accepted
+paths, matching this project's own paper text, which reports only the
+per-path filtering count and says so explicitly rather than approximating
+the final ratio/aggregation step). Everything that *is* per-path (trail,
+window, growth-ratio) is fully early-filtered.
 
 NFA: state 0 (start) -[deposit]-> 1 -[transfer|withdraw]-> 1 (self-loop,
 accepting).
