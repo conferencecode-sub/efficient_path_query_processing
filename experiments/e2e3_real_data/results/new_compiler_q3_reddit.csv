@@ -1,0 +1,10 @@
+engine,length,result,runtime_ms,intermediate_paths
+recap-new-optimized,2,17,14.524713158607483,19
+recap-new-optimized,3,20,15.361383557319641,22
+recap-new-optimized,4,36,18.603503704071045,38
+recap-new-optimized,5,38,23.451313376426697,40
+recap-new-optimized,6,38,25.252148509025574,40
+recap-new-optimized,7,38,24.235010147094727,40
+recap-new-optimized,8,38,24.512603878974915,40
+recap-new-optimized,9,38,28.802230954170227,40
+recap-new-optimized,10,38,23.923546075820923,40
