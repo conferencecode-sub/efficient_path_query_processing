@@ -257,6 +257,52 @@ def test_partial_update_d_struct_non_factorized_per_pair():
     assert d_by_vertex[3]["last_amount"] == 10.0  # (1,1) doesn't touch last_amount -- carried from hop 1
 
 
+def test_bare_D_update_d_factorized_no_longer_crashes_stage_f():
+    # Regression: bare `D` ("nothing changes on this hop") is valid for
+    # Stage E's macro-paste but used to make Stage F's flattener raise
+    # UnsupportedError ("expected a struct literal ... got: 'D'"), since
+    # _decompose_struct can only decompose an actual struct. Found via the
+    # General-mode workbench table, whose per-row default is exactly this.
+    conn = _conn_with_edges([(1, 1, 2, "purchase", 10.0), (2, 2, 3, "purchase", 20.0)])
+    aggregate = SelectiveAggregate(
+        dictionary_keys=(DictionaryKey("max_amount", "DOUBLE"), DictionaryKey("min_amount", "DOUBLE")),
+        init_d="{max_amount: -1e308, min_amount: 1e308}",
+        update_d="D",  # nothing ever changes
+        is_viable_d="TRUE", is_viable_d_final="TRUE", finalize_d="D", factorized=True,
+    )
+    standard, optimized = _both_queries(conn, aggregate, LOOP_RELATION,
+                                         start_vertices=[1], length_bound=2)
+    standard_rows = {(v, q, path_length) for v, q, _d, path_length, _r
+                      in conn.execute(standard.sql).fetchall()}
+    optimized_rows = {(v, q, path_length) for v, q, _d, path_length, _r
+                       in conn.execute(optimized.sql).fetchall()}
+    assert standard_rows == optimized_rows == {(1, 0, 0), (2, 0, 1), (3, 0, 2)}
+    d_by_vertex = {v: d for v, _q, d, _pl, _r in conn.execute(optimized.sql).fetchall()}
+    assert d_by_vertex[3] == {"max_amount": -1e308, "min_amount": 1e308}  # frozen at init throughout
+
+
+def test_bare_D_update_d_non_factorized_per_pair_no_longer_crashes_stage_f():
+    conn = _conn_with_edges([(1, 1, 2, "purchase", 10.0), (2, 2, 3, "purchase", 999.0)])
+    aggregate = SelectiveAggregate(
+        dictionary_keys=(DictionaryKey("last_amount", "DOUBLE"),),
+        init_d="{last_amount: NULL}",
+        # (0,1) updates the key; (1,1) is the workbench's own General-mode
+        # default for an unedited row, bare "D".
+        update_d={(0, 1): "{last_amount: e.amount}", (1, 1): "D"},
+        is_viable_d={(0, 1): "TRUE", (1, 1): "TRUE"},
+        is_viable_d_final="TRUE", finalize_d="D", factorized=False,
+    )
+    standard, optimized = _both_queries(conn, aggregate, TWO_STATE_RELATION,
+                                         start_vertices=[1], length_bound=3)
+    standard_rows = {(v, q, path_length) for v, q, _d, path_length, _r
+                      in conn.execute(standard.sql).fetchall()}
+    optimized_rows = {(v, q, path_length) for v, q, _d, path_length, _r
+                       in conn.execute(optimized.sql).fetchall()}
+    assert standard_rows == optimized_rows == {(2, 1, 1), (3, 1, 2)}
+    d_by_vertex = {v: d for v, _q, d, _pl, _r in conn.execute(optimized.sql).fetchall()}
+    assert d_by_vertex[3]["last_amount"] == 10.0  # (1,1)'s bare "D" leaves it untouched
+
+
 def test_update_d_assignment_statement_form_matches_struct_literal_form():
     conn = _conn_with_edges([
         (1, 1, 2, "purchase", 10.0), (2, 2, 3, "purchase", 20.0), (3, 3, 4, "purchase", 999.0)])

@@ -329,8 +329,19 @@ def test_normalize_update_d_body_still_handles_a_plain_struct_literal():
     assert "D.min_amount" in normalized  # same completion as complete_update_d_body
 
 
-def test_normalize_update_d_body_still_passes_through_bare_D():
-    assert normalize_update_d_body("D", declared_keys=["max_amount"]) == "D"
+def test_normalize_update_d_body_expands_bare_D_to_a_covering_struct():
+    # Bare `D` ("nothing changes") used to pass through unchanged, which was
+    # valid for Stage E's macro-paste but broke Stage F's flattener (it can
+    # only decompose an actual struct literal, per _decompose_struct) --
+    # fixed to expand into the equivalent explicit struct instead.
+    assert (normalize_update_d_body("D", declared_keys=["max_amount"])
+            == "{'max_amount': D.max_amount}")
+    assert (normalize_update_d_body("D", declared_keys=["max_amount", "min_amount"])
+            == "{'max_amount': D.max_amount, 'min_amount': D.min_amount}")
+
+
+def test_normalize_update_d_body_bare_D_still_passes_through_with_no_declared_keys():
+    assert normalize_update_d_body("D", declared_keys=[]) == "D"
 
 
 def test_normalize_update_d_body_rejects_assignment_to_undeclared_key():

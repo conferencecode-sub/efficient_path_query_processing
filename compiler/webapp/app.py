@@ -392,13 +392,18 @@ if use_library:
 custom_aggregate: SelectiveAggregate | None = None
 use_custom = st.checkbox("Author a custom aggregate", value=False, key="use_custom")
 if use_custom:
-    st.caption("One expression per function (not one per transition pair -- Q1's regex alone "
-               "has 100+ pairs, see CHECKLIST.md for why per-transition editing isn't offered "
-               "here).")
-    st.caption("Convention: `D.<key>` for a dictionary field, `e.<column>` for an edge property. "
-               "**Dictionary keys are inferred automatically from `init_d`'s own struct literal --"
-               "** there's no separate table to keep in sync by hand. Edit `init_d`, and the "
-               "tracked keys (shown below it) follow.")
+    custom_mode = st.radio(
+        "Authoring mode", ["Factorized", "General"], horizontal=True, key="custom_mode",
+        help="**Factorized**: `update_d`/`is_viable_d` are each one expression, applied "
+             "regardless of NFA state -- fine when the constraint doesn't depend on where "
+             "the path is in the regex. **General**: `update_d`/`is_viable_d` may each "
+             "differ per `(from_state, to_state)` transition pair (Figure 5's per-transition "
+             "boxes), edited as a table below instead of one CASE-statement text block.")
+    st.caption("Convention: `D.<key>` for a dictionary field, `e.<column>` for an edge property"
+               + (", plus bare `from_state`/`to_state` in General mode" if custom_mode == "General" else "")
+               + ". **Dictionary keys are inferred automatically from `init_d`'s own struct "
+               "literal --** there's no separate table to keep in sync by hand. Edit `init_d`, "
+               "and the tracked keys (shown below it) follow.")
 
     if _default_property is not None:
         _max_key, _min_key = f"max_{_default_property}", f"min_{_default_property}"
@@ -438,18 +443,61 @@ if use_custom:
         _friendly_error(exc)
         dictionary_keys = None  # fix init_d above before this can run
 
-    custom_update_d = st.text_area(
-        "update_d(D, e)", value=_default_update_d, height=80, key="custom_update_d",
-        help="**Role:** how `D` changes when extending a path by one edge `e`. Two accepted "
-             "forms: a struct literal `{key: expr, ...}`, or one or more `D.<key> = <expr>` "
-             "assignments, one per line (or separated by `;` on one line). Either way, you "
-             "don't have to mention every key from `init_d`: leave one out and it automatically "
-             "keeps its previous value unchanged instead of being removed from `D`. "
-             "Accumulator-style assignments may also use `+=`/`-=`/`*=`//=` (expanded to the "
-             "equivalent `D.key = D.key <op> (expr)` before anything else happens to it). Only "
-             "`D.<key>` (dot notation) is recognized, not `D[\"key\"]`.\n\n"
-             "**Examples:** `{last_time: e.time}` (struct form); "
-             "`D.total_amount += e.amount` (assignment form with augmented assignment).")
+    custom_update_d_dict: dict[tuple[int, int], str] | None = None
+    custom_is_viable_d_dict: dict[tuple[int, int], str] | None = None
+
+    if custom_mode == "Factorized":
+        custom_update_d = st.text_area(
+            "update_d(D, e)", value=_default_update_d, height=80, key="custom_update_d",
+            help="**Role:** how `D` changes when extending a path by one edge `e`. Two accepted "
+                 "forms: a struct literal `{key: expr, ...}`, or one or more `D.<key> = <expr>` "
+                 "assignments, one per line (or separated by `;` on one line). Either way, you "
+                 "don't have to mention every key from `init_d`: leave one out and it "
+                 "automatically keeps its previous value unchanged instead of being removed "
+                 "from `D`. Accumulator-style assignments may also use `+=`/`-=`/`*=`//=` "
+                 "(expanded to the equivalent `D.key = D.key <op> (expr)` before anything else "
+                 "happens to it). Only `D.<key>` (dot notation) is recognized, not `D[\"key\"]`."
+                 "\n\n**Examples:** `{last_time: e.time}` (struct form); "
+                 "`D.total_amount += e.amount` (assignment form with augmented assignment).")
+    else:
+        # General (Figure 5): update_d/is_viable_d may differ per (from_state,
+        # to_state) transition pair, edited as one table instead of a per-pair
+        # text box each -- the scale problem that kept non-factorized authoring
+        # out of the workbench until now. `relation` may be None (no regex
+        # picked in Section 2); fall back to the same trivial_relation() Stage
+        # A/G already use for a regex-less query, so the table still has
+        # something to show (a single (0,0) row).
+        _table_relation = relation if relation is not None else trivial_relation()
+        _pairs = sorted({(frm, to) for frm, to, _label in _table_relation.rows})
+        _labels_by_pair: dict[tuple[int, int], set[str]] = {}
+        for _frm, _to, _label in _table_relation.rows:
+            _labels_by_pair.setdefault((_frm, _to), set()).add(_label)
+
+        if len(_pairs) > 50:
+            st.warning(f"This automaton has {len(_pairs)} transition pairs -- editing all of "
+                       "them here may be slow. A simpler/shorter regex produces fewer pairs.")
+
+        st.caption(f"One row per `(from\\_state, to\\_state)` transition pair ({len(_pairs)} "
+                   "total). Unedited rows default to `D` (unchanged) / `TRUE` (always viable) "
+                   "-- edit only the rows that need real logic. `labels` is shown for context "
+                   "and isn't itself editable.")
+        _default_table = pd.DataFrame([
+            {"from_state": frm, "to_state": to,
+             "labels": ", ".join(sorted(_labels_by_pair[(frm, to)])),
+             "update_d": "D", "is_viable_d": "TRUE"}
+            for frm, to in _pairs
+        ])
+        _table_key = f"general_table::{regex if use_regex else '(no regex)'}"
+        _edited_table = st.data_editor(
+            _default_table, key=_table_key, hide_index=True, width="stretch",
+            num_rows="fixed", disabled=["from_state", "to_state", "labels"])
+
+        custom_update_d_dict = {}
+        custom_is_viable_d_dict = {}
+        for _, _row in _edited_table.iterrows():
+            _pair = (int(_row["from_state"]), int(_row["to_state"]))
+            custom_update_d_dict[_pair] = (_row["update_d"] or "D").strip() or "D"
+            custom_is_viable_d_dict[_pair] = (_row["is_viable_d"] or "TRUE").strip() or "TRUE"
 
     with st.expander("Merge-function authoring box (FR-35, sketch only -- not run)"):
         st.caption(
@@ -477,14 +525,19 @@ if use_custom:
                  "combination makes sense for it (e.g. GREATEST/LEAST for a running "
                  "extremum, list_concat for a trail).")
 
-    custom_is_viable_d = st.text_area(
-        "is_viable_d(D, e)", value=_default_is_viable_d, height=80, key="custom_is_viable_d",
-        help="**Role:** the early-filtering check (Definition 8) -- a single Boolean "
-             "expression over the dictionary *before* this hop's `update_d` and the "
-             "candidate edge `e`. Returning `FALSE` prunes this extension immediately, before "
-             "it's ever added to the path.\n\n"
-             "**Examples:** `NOT list_contains(D.edge_ids, e.id)` (trail: reject a repeated "
-             "edge); `D.last_time IS NULL OR e.time >= D.last_time` (non-decreasing timestamps).")
+    if custom_mode == "Factorized":
+        custom_is_viable_d = st.text_area(
+            "is_viable_d(D, e)", value=_default_is_viable_d, height=80, key="custom_is_viable_d",
+            help="**Role:** the early-filtering check (Definition 8) -- a single Boolean "
+                 "expression over the dictionary *before* this hop's `update_d` and the "
+                 "candidate edge `e`. Returning `FALSE` prunes this extension immediately, "
+                 "before it's ever added to the path.\n\n"
+                 "**Examples:** `NOT list_contains(D.edge_ids, e.id)` (trail: reject a repeated "
+                 "edge); `D.last_time IS NULL OR e.time >= D.last_time` (non-decreasing "
+                 "timestamps).")
+    # In General mode, is_viable_d is already captured per-row in the table above
+    # (custom_is_viable_d_dict) -- no separate single-body widget to show here.
+
     custom_is_viable_d_final = st.text_area(
         "is_viable_d_final(D)", value=_default_is_viable_d_final, height=60,
         key="custom_is_viable_d_final",
@@ -502,15 +555,26 @@ if use_custom:
              "`D.edge_ids` (report only the trail, dropping any other tracked keys).")
 
     if dictionary_keys is not None:
-        custom_aggregate = SelectiveAggregate(
-            dictionary_keys=dictionary_keys,
-            init_d=custom_init_d,
-            update_d=custom_update_d,
-            is_viable_d=custom_is_viable_d,
-            is_viable_d_final=custom_is_viable_d_final,
-            finalize_d=custom_finalize_d,
-            factorized=True,
-        )
+        if custom_mode == "Factorized":
+            custom_aggregate = SelectiveAggregate(
+                dictionary_keys=dictionary_keys,
+                init_d=custom_init_d,
+                update_d=custom_update_d,
+                is_viable_d=custom_is_viable_d,
+                is_viable_d_final=custom_is_viable_d_final,
+                finalize_d=custom_finalize_d,
+                factorized=True,
+            )
+        else:
+            custom_aggregate = SelectiveAggregate(
+                dictionary_keys=dictionary_keys,
+                init_d=custom_init_d,
+                update_d=custom_update_d_dict,
+                is_viable_d=custom_is_viable_d_dict,
+                is_viable_d_final=custom_is_viable_d_final,
+                finalize_d=custom_finalize_d,
+                factorized=False,
+            )
 
 compare_to_standard = st.checkbox(
     "Also run the unoptimized (Stage E) query, to check it agrees with the optimized one (FR-22)",
@@ -574,7 +638,7 @@ try:
             set_trivial_label_column(conn)
 
     with timed_stage(breakdown, "D: validate aggregate"):
-        validate_selective_aggregate(aggregate, edge_columns=set(edge_columns))
+        validate_selective_aggregate(aggregate, edge_columns=set(edge_columns), transitions=relation)
 
     with timed_stage(breakdown, "A: select start vertices"):
         if start_vertex_ids_text is not None:

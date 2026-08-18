@@ -29,6 +29,73 @@ but needs E working as its correctness baseline (NFR-2 compares standard vs.
 optimized output), so it comes after E/G. I (the workbench UI) comes last --
 it's glue over an already-working pipeline.
 
+## Completed: General (non-factorized) custom-aggregate authoring in the workbench (2026-08-17)
+
+Adds the workbench UI half of what the compiler already supported: a
+per-`(from_state, to_state)` transition table for `update_d`/`is_viable_d`,
+matching Figure 5's per-transition boxes and a hand-drawn mockup the user
+provided (`info_background/gen_recap.png`) -- read both directly (the PDF
+page rendered via `pymupdf`, since no PDF tool was installed) before
+designing this, rather than guessing from the filenames. LLM-assisted
+prefilling (the mockup's "auto?" annotation, i.e. reviving Module J) is
+explicitly deferred to a future session at the user's request -- see the
+dated project memory for that plan and the "6 vs 5 functions" open
+question to confirm first.
+
+**Backend needed no new primitives** -- `SelectiveAggregate.update_d`/
+`is_viable_d` already accept `dict[TransitionPair, str]`,
+`generate_skeleton(factorized=False)` already builds this shape, and
+Stage E/F already build/preserve the resulting `CASE`. Purely a workbench
+gap, per its own module docstring ("a one-text-box-per-pair UI doesn't
+scale").
+
+**`webapp/app.py`:** "Author a custom aggregate" now has an "Authoring
+mode" radio (Factorized / General). General mode replaces the single
+`update_d`/`is_viable_d` text areas with one `st.data_editor` table --
+one row per pair from the already-compiled `relation` (or
+`trivial_relation()` if no regex is picked), columns `from_state`/
+`to_state`/`labels` (read-only, for context) /`update_d`/`is_viable_d`
+(editable), rows defaulting to `D`/`TRUE` so only rows needing real logic
+need editing. `num_rows="fixed"` so the table can't drift out of sync
+with the relation's actual pairs. A warning (not a block) appears past 50
+pairs. `init_d`/`is_viable_d_final`/`finalize_d` are unchanged, shown in
+both modes (Definition 8 doesn't make these state-dependent).
+`validate_selective_aggregate`'s call site now also passes
+`transitions=relation`, so the existing pair-completeness check
+(previously dormant since the UI never produced a non-factorized
+aggregate) actually runs.
+
+**Real bug found and fixed while wiring this up, in shared compiler code,
+not just new UI code:** `normalize_update_d_body` (called by both Stage E
+and Stage F) passed a bare `D` body ("nothing changes on this hop")
+through unchanged -- valid for Stage E's macro-paste, but Stage F's
+`_decompose_struct` can only decompose an actual struct literal, so it
+raised `UnsupportedError` ("expected a struct literal ... got: 'D'").
+This is exactly the General-mode table's own per-row default, so it
+surfaced immediately on first end-to-end test. Fixed by expanding bare
+`D` into the explicit covering struct (`{key: D.key, ...}`) when
+`declared_keys` is non-empty -- affects factorized bodies too (anyone
+who wrote plain `D` by hand), not just the new per-pair case. One
+existing test asserted the old (buggy) pass-through behavior by name
+(`test_normalize_update_d_body_still_passes_through_bare_D`) and was
+updated, not just made to pass; two new end-to-end regression tests added
+in `test_optimizer.py` (factorized and non-factorized bare-`D`, each
+checked for FR-22 agreement, not just "doesn't crash").
+
+Verified: 143 tests pass (was 140; +1 new in `test_selective_aggregate.py`,
++2 in `test_optimizer.py`), plus `streamlit.testing.v1.AppTest` driving
+the actual workbench headlessly -- confirmed the table renders with the
+right default content/labels for a real automaton (62-69 pairs, varies
+with the randomly-drawn example regex), the `>50` warning fires, General
+mode is correctly absent from the aggregate-source's library branch, and
+(after the bare-`D` fix) a full Compile & run in General mode with
+all-default rows produces a real FR-22 PASS -- not just "no exception."
+`AppTest`'s `data_editor` support doesn't expose a way to script a cell
+edit in this Streamlit version, so the specific "user edits one row"
+interaction wasn't exercised live; the underlying dict constructed from
+an edited `DataFrame` is the same plain per-pair mapping already covered
+by `test_optimizer.py`'s non-factorized tests.
+
 ## Completed: library + custom aggregates now combine additively (2026-08-17)
 
 Follow-up to FR-34..39 below, per user feedback after using it: "Aggregate

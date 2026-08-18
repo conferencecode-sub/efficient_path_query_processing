@@ -240,7 +240,24 @@ def normalize_update_d_body(body: str, *, declared_keys: list[str]) -> str:
     if len(statements) == 1 and isinstance(statements[0], exp.Struct):
         return complete_update_d_body(body, declared_keys=declared_keys)
     if len(statements) == 1 and not isinstance(statements[0], exp.EQ):
-        return body  # bare D, or anything else -- not this function's shape to normalize
+        statement = statements[0]
+        if isinstance(statement, exp.Column) and not statement.table and statement.name == DICT_ALIAS:
+            # Bare D means "every key keeps its previous value" -- expand to
+            # the explicit covering struct literal so Stage F's flattener
+            # (which can only decompose an actual struct, per
+            # `_decompose_struct`) can handle it the same way Stage E's
+            # macro-paste already could for free (a bare `D` macro body is
+            # already valid SQL on its own). Without this, a factorized or
+            # per-transition body of plain `D` -- the natural "nothing
+            # changes on this hop/transition" default -- fails Stage F with
+            # "expected a struct literal ... got: 'D'" despite being
+            # perfectly valid for Stage E.
+            tree = exp.Struct(expressions=[
+                exp.PropertyEQ(this=exp.to_identifier(key), expression=exp.column(key, table=DICT_ALIAS))
+                for key in declared_keys
+            ])
+            return tree.sql(dialect="duckdb")
+        return body  # anything else -- not this function's shape to normalize
 
     assigned: dict[str, exp.Expression] = {}
     for statement in statements:

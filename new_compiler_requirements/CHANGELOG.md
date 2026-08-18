@@ -49,3 +49,20 @@ placement than what was specified. **FR-35 amended** accordingly: the box
 now appears only in the custom-aggregate authoring flow, directly beneath
 `update_d`, with its `D1`/`D2` defaults seeded from the author's own
 `init_d` keys instead of a generic example.
+
+## 2026-08-17 — FR-40 added and implemented: General (non-factorized) authoring in the workbench
+
+Source: the user's own idea, grounded in the paper's Figure 5 and a
+hand-drawn mockup (`info_background/gen_recap.png`) they provided. New
+**FR-40** (Section I): a Factorized/General authoring-mode choice for
+custom aggregates, General mode presenting `update_d`/`is_viable_d` as a
+per-`(from_state, to_state)` table (FR-12's own skeleton, as a table
+instead of a `CASE` block) rather than a single body each. Implemented
+the same day -- see `compiler/CHECKLIST.md`'s dated entry for the design,
+the real shared-code bug it surfaced and fixed (`normalize_update_d_body`
+didn't expand bare `D` into a struct, breaking Stage F for *any* bare-`D`
+update_d, factorized or not), and how it was verified.
+
+LLM-assisted prefilling of this table (and the other four functions),
+i.e. reviving Module J, is explicitly deferred to a future session at the
+user's request -- not part of FR-40, not started.
