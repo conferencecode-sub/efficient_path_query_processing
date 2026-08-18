@@ -29,6 +29,72 @@ but needs E working as its correctness baseline (NFR-2 compares standard vs.
 optimized output), so it comes after E/G. I (the workbench UI) comes last --
 it's glue over an already-working pipeline.
 
+## Completed: `transitions.is_ambiguous()` -- detects automata that can overcount path results (2026-08-18)
+
+Real finding, not a hypothetical: a `TransitionsRelation` can be
+*ambiguous* -- some label string has more than one distinct accepting
+run through it -- even after `build_transitions_relation`'s own
+q0-unioning dedup (which only removes duplication caused by *multiple
+start states* sharing an outgoing transition, e.g. the 2026-08-13 bug
+`test_multiple_start_states_sharing_an_outgoing_transition_deduplicate`
+already regression-tests). Ambiguity arising *deeper* in the automaton --
+a label reachable via two overlapping alternation branches, confirmed for
+`((transfer|purchase)|(purchase|sale))+`, and for `(purchase|sale){1,3}
+phishing`'s `{m,n}` expansion -- survives that dedup untouched. Confirmed
+empirically first (real Metaverse data, `trail_via_edge_ids()`, `ell` in
+{1,2,3}): the *physical path set* found is always identical regardless of
+ambiguity, but an ambiguous relation reports a higher *count* (one row
+per accepting run, not one per physical path) than the same query against
+the minimized (hence always-unambiguous) DFA. Checked against every query
+this project actually reports: Q1 (both `minimize=True`, as the paper
+uses, and `minimize=False`), Q2/Q3/Q4's `trivial_relation()`, and
+FinBench's TCR1/TCR5/TCR8 (hand-built, one transition per `(state,
+label)` already) are all unambiguous -- no existing reported result is
+affected. Risk is for future/user-authored regexes, not a known-bad
+default.
+
+`transitions.is_ambiguous(relation) -> (bool, witness_pair | None)`:
+standard product-automaton construction over pairs of states, ambiguous
+iff some pair `(p, q)` with `p != q` is both forward-reachable from
+`(q0, q0)` and backward-reachable to a pair of accepting states. Validated
+against 8 hand-picked regexes (concatenation, union, `*`, `+`, `?`,
+`{m,n}`, and one deliberately-redundant union) by cross-checking against
+the empirical DuckDB-level finding before trusting it -- an earlier draft
+of the check ran on the raw pre-Stage-C `NFA` and over-flagged Q1 and 3
+others as ambiguous; the bug was checking the wrong artifact (the raw
+NFA's multiple start states, which Stage C already dedups away, not what
+actually reaches the query). 5 new tests in `test_transitions.py`
+(148 total, was 143), including regression coverage for both the
+now-confirmed-safe Q1 case and the confirmed-ambiguous synthetic case.
+**Follow-up, same day: wired in as auto-escalation, per explicit user
+decision ("minimizing would be ideal, just give the appropriate
+warning").** Three options were on the table -- auto-escalate only when
+ambiguous, flip the global default to `minimize=True`, or warn without
+auto-fixing -- user picked auto-escalate-when-ambiguous, keeping FR-7's
+`minimize=False` default intact for every regex that doesn't need the
+fix. New `transitions.guard_against_ambiguity(pattern, nfa, relation) ->
+(nfa, relation, warning_message | None)`: no-op when unambiguous or
+already `minimize=True`; when ambiguous, recompiles with `minimize=True`
+(always a DFA, hence always unambiguous -- a strict fix, not a
+heuristic), emits a `warnings.warn`, and returns the same message string
+so a UI caller can also display it directly (a bare Python warning is
+easy to miss outside a terminal). The message explicitly names the
+wavefront/segment-splitting compatibility tradeoff (FR-7, R4.O2) so a
+caller relying on that isn't silently surprised by a state-structure
+change. Wired into both real `compile_regex_to_nfa()`-then-
+`build_transitions_relation()` call sites in `webapp/app.py` (the live
+compile-preview and the timed "Compile & run" path, the latter as its
+own `timed_stage(..., "C: ambiguity guard")` so the timing breakdown
+still shows it), each followed by `st.warning(...)` when triggered.
+3 new tests (`test_guard_leaves_an_unambiguous_relation_unchanged`,
+`test_guard_escalates_an_ambiguous_relation_and_warns`,
+`test_guard_never_fires_for_an_already_minimized_relation`) -- 151 total,
+was 148. Confirmed via `streamlit.testing.v1.AppTest` that the app still
+loads with no exception after the edit (no browser available in this
+environment); did not attempt a full simulated file-upload+widget
+walkthrough to trigger the warning live, given the direct unit-level
+coverage of the exact function used at both call sites.
+
 ## Completed: General (non-factorized) custom-aggregate authoring in the workbench (2026-08-17)
 
 Adds the workbench UI half of what the compiler already supported: a

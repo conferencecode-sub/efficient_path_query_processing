@@ -1,5 +1,10 @@
+import pytest
+
 from recap_compiler.regex_frontend import NFA, compile_regex_to_nfa
-from recap_compiler.transitions import TransitionsRelation, build_transitions_relation, to_dataframe
+from recap_compiler.transitions import (
+    TransitionsRelation, build_transitions_relation, guard_against_ambiguity, is_ambiguous,
+    to_dataframe, trivial_relation,
+)
 
 
 class FakeState:
@@ -119,6 +124,118 @@ def test_state_numbering_is_deterministic():
     first = build_transitions_relation(nfa)
     second = build_transitions_relation(nfa)
     assert first == second
+
+
+def test_trivial_relation_is_not_ambiguous():
+    ambiguous, witness = is_ambiguous(trivial_relation())
+    assert ambiguous is False
+    assert witness is None
+
+
+def test_simple_deterministic_relation_is_not_ambiguous():
+    s0, s1, s2 = FakeState(0), FakeState(1), FakeState(2)
+    nfa = NFA(states=frozenset({s0, s1, s2}), start_states=frozenset({s0}),
+              accepting_states=frozenset({s2}), transitions=((s0, "a", s1), (s1, "b", s2)))
+    relation = build_transitions_relation(nfa)
+    ambiguous, witness = is_ambiguous(relation)
+    assert ambiguous is False
+    assert witness is None
+
+
+def test_two_distinct_accepting_runs_for_one_string_is_detected():
+    """Minimal hand-built ambiguous automaton: q0 --a--> {1, 2} (a genuine
+    nondeterministic choice, not removed by build_transitions_relation's
+    own q0-unioning dedup since q0 is *already* the only start state
+    here), then both 1 and 2 --b--> 3 (accepting). The string "ab" has two
+    distinct accepting runs (0,1,3) and (0,2,3) -- textbook ambiguity."""
+    relation = TransitionsRelation(
+        rows=((0, 1, "a"), (0, 2, "a"), (1, 3, "b"), (2, 3, "b")),
+        q0=0, accepting_states=frozenset({3}),
+    )
+    ambiguous, witness = is_ambiguous(relation)
+    assert ambiguous is True
+    p, q = witness
+    assert p != q
+    assert {p, q} == {1, 2}
+
+
+def test_q1_paper_regex_is_not_ambiguous_minimized_and_unminimized():
+    """Regression test for the 2026-08-18 sanity check: minimize=True vs.
+    minimize=False were confirmed to produce identical result counts (not
+    just identical path sets) for Q1's actual paper regex, on real data.
+    This is *why* that holds -- the relation is unambiguous either way, so
+    no accepting run is ever double-counted."""
+    regex = "(transfer|purchase|sale)+(phishing|scam)+"
+    for minimize in (False, True):
+        nfa = compile_regex_to_nfa(regex, minimize=minimize)
+        relation = build_transitions_relation(nfa)
+        ambiguous, witness = is_ambiguous(relation)
+        assert ambiguous is False, f"Q1's regex should be unambiguous (minimize={minimize})"
+        assert witness is None
+
+
+def test_overlapping_alternation_branches_produce_a_detectably_ambiguous_relation():
+    """Regression test for the 2026-08-18 finding: a label reachable via
+    two overlapping alternation branches (here, 'purchase' appears in both
+    halves of the outer union) makes the *unminimized* relation ambiguous
+    -- confirmed empirically to overcount real query results (same
+    physical-path set, higher row count) despite build_transitions_relation's
+    own start-state dedup, since the overlap here isn't at the start
+    state. minimize=True removes it (a DFA is always unambiguous)."""
+    regex = "((transfer|purchase)|(purchase|sale))+"
+    nfa_unminimized = compile_regex_to_nfa(regex, minimize=False)
+    relation_unminimized = build_transitions_relation(nfa_unminimized)
+    ambiguous, witness = is_ambiguous(relation_unminimized)
+    assert ambiguous is True
+    assert witness is not None
+
+    nfa_minimized = compile_regex_to_nfa(regex, minimize=True)
+    relation_minimized = build_transitions_relation(nfa_minimized)
+    ambiguous_min, witness_min = is_ambiguous(relation_minimized)
+    assert ambiguous_min is False
+    assert witness_min is None
+
+
+def test_guard_leaves_an_unambiguous_relation_unchanged():
+    regex = "(transfer|purchase|sale)+(phishing|scam)+"
+    nfa = compile_regex_to_nfa(regex, minimize=False)
+    relation = build_transitions_relation(nfa)
+    new_nfa, new_relation, message = guard_against_ambiguity(regex, nfa, relation)
+    assert new_nfa is nfa
+    assert new_relation == relation
+    assert message is None
+
+
+def test_guard_escalates_an_ambiguous_relation_and_warns():
+    regex = "((transfer|purchase)|(purchase|sale))+"
+    nfa = compile_regex_to_nfa(regex, minimize=False)
+    relation = build_transitions_relation(nfa)
+    ambiguous_before, _ = is_ambiguous(relation)
+    assert ambiguous_before is True  # sanity: this regex really is ambiguous unminimized
+
+    with pytest.warns(RuntimeWarning, match="ambiguous automaton"):
+        new_nfa, new_relation, message = guard_against_ambiguity(regex, nfa, relation)
+
+    assert message is not None
+    assert "ambiguous automaton" in message
+    assert "wavefront/segment" in message  # the compatibility caveat must survive into the message
+    ambiguous_after, witness_after = is_ambiguous(new_relation)
+    assert ambiguous_after is False
+    assert witness_after is None
+    # escalating actually changed something -- not a no-op relabeled as "fixed"
+    assert new_relation != relation
+
+
+def test_guard_never_fires_for_an_already_minimized_relation():
+    """A minimized automaton is always a DFA, hence always unambiguous --
+    the guard should be a pure no-op on it, never re-escalating."""
+    regex = "((transfer|purchase)|(purchase|sale))+"
+    nfa = compile_regex_to_nfa(regex, minimize=True)
+    relation = build_transitions_relation(nfa)
+    new_nfa, new_relation, message = guard_against_ambiguity(regex, nfa, relation)
+    assert new_nfa is nfa
+    assert new_relation == relation
+    assert message is None
 
 
 def test_domestic_foreign_end_to_end():

@@ -65,7 +65,7 @@ from recap_compiler.selective_aggregate import (
     validate_selective_aggregate,
 )
 from recap_compiler.standard_sql import build_standard_query, materialize_transitions, register_aggregate_macros
-from recap_compiler.transitions import build_transitions_relation, trivial_relation
+from recap_compiler.transitions import build_transitions_relation, guard_against_ambiguity, trivial_relation
 
 DEFAULT_DATASET = os.path.join(
     os.path.dirname(__file__), "..", "..", "ReCAP", "simple_dataset", "LG.csv")
@@ -298,6 +298,9 @@ if use_regex:
     try:
         nfa = compile_regex_to_nfa(regex)
         relation = build_transitions_relation(nfa)
+        nfa, relation, ambiguity_warning = guard_against_ambiguity(regex, nfa, relation)
+        if ambiguity_warning:
+            st.warning(ambiguity_warning)
     except RecapCompilerError as exc:
         _friendly_error(exc)
         st.stop()
@@ -597,6 +600,10 @@ try:
             nfa = compile_regex_to_nfa(regex)
         with timed_stage(breakdown, "C: build transitions relation"):
             relation = build_transitions_relation(nfa)  # deterministic (NFR-1) -- same content as above
+        with timed_stage(breakdown, "C: ambiguity guard"):
+            nfa, relation, ambiguity_warning = guard_against_ambiguity(regex, nfa, relation)
+        if ambiguity_warning:
+            st.warning(ambiguity_warning)
     else:
         # No regex chosen -- still a real (if trivial) automaton, so this
         # goes through the exact same Stage E/F code path as a real regex.
