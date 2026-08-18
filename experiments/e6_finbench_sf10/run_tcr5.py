@@ -35,7 +35,7 @@ from recap_compiler.standard_sql import materialize_transitions, register_aggreg
 # tcr5_reference before trusting it -- see run_tcr1.py for why re-deriving
 # per scale factor is necessary, not optional.
 START_VERTEX = 6597069805450
-LENGTHS = (2, 3, 4, 5)
+LENGTHS = (2, 3, 4, 5, 6, 7, 8)
 TIMEOUT_S = 7200
 CSV_PATH = os.path.join(os.path.dirname(__file__), "results", "tcr5.csv")
 CSV_FIELDNAMES = ["length", "result", "reference_result", "runtime_ms", "peak_rss_mb", "error"]

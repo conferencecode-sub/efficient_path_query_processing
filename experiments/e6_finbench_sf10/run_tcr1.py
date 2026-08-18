@@ -41,7 +41,7 @@ from recap_compiler.standard_sql import materialize_transitions, register_aggreg
 # every length) -- each scale factor is a fresh random graph, not an
 # extension of the smaller one.
 START_VERTEX = 208575431643765159
-LENGTHS = (2, 3, 4, 5)
+LENGTHS = (2, 3, 4, 5, 6, 7, 8)
 TIMEOUT_S = 7200
 CSV_PATH = os.path.join(os.path.dirname(__file__), "results", "tcr1.csv")
 CSV_FIELDNAMES = ["length", "result", "reference_result", "runtime_ms", "peak_rss_mb", "error"]

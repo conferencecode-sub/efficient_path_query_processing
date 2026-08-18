@@ -21,7 +21,7 @@ DB_PATH = os.path.join(_HERE, "kuzu_finbench_db")
 START_TIME = 1_500_000_000_000
 END_TIME = 1_700_000_000_000
 THRESHOLD = 1.0
-LENGTHS = (2, 3, 4, 5)
+LENGTHS = (2, 3, 4, 5, 6, 7, 8)
 TIMEOUT_MS = 7200_000
 
 EDGE_TYPES = ["transfer", "withdraw", "deposit", "own", "signedInBy"]
