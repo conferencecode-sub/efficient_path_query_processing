@@ -29,6 +29,53 @@ but needs E working as its correctness baseline (NFR-2 compares standard vs.
 optimized output), so it comes after E/G. I (the workbench UI) comes last --
 it's glue over an already-working pipeline.
 
+## Completed: library + custom aggregates now combine additively (2026-08-17)
+
+Follow-up to FR-34..39 below, per user feedback after using it: "Aggregate
+source" was a mutually-exclusive radio (Library vs. Custom), so (a)
+switching between them threw away whatever was in the other, and (b)
+there was no way to combine a library entry with a custom-authored one,
+even though `combine_library_aggregates` never actually required its
+inputs to come from the library specifically -- it just needs factorized
+`SelectiveAggregate` objects.
+
+Replaced the radio with two independent checkboxes, "Use library
+aggregate(s)" and "Author a custom aggregate" (library defaults on,
+custom defaults off, matching the old radio's default). Both can be
+checked at once; whatever is picked/authored across both is combined at
+compile time via the same FR-34 `combine_library_aggregates` (1 item ->
+used directly, 2+ -> combined, 0 -> a friendly error instead of a crash).
+
+**Also investigated, and worth recording precisely:** giving the custom
+text areas an explicit `key=` does *not*, by itself, make their values
+survive the widget disappearing from the script entirely (confirmed by
+direct testing, including a minimal isolated repro outside this app) --
+Streamlit discards session state for any widget not instantiated during a
+run, key or not; a `key` only prevents same-run collisions and enables
+deriving fresh defaults (e.g. the existing `label_regex::{label_column}`
+pattern), it does not survive *complete absence* across reruns. The
+practical fix that matters here: since the two aggregate sources are now
+independent checkboxes rather than a radio, a user who keeps "Author a
+custom aggregate" checked throughout never has that section disappear at
+all while toggling the *other* checkbox, so their edits are never at risk
+in the scenario that motivated this change. The keys were still added/kept
+(harmless, and needed for the per-kind library widgets already using this
+pattern). The narrower remaining case -- unchecking "Author a custom
+aggregate" and later re-checking *that same* box -- still resets to
+defaults; fixing that fully would need a shadow-session-state-plus-
+`on_change` pattern, not attempted here since it wasn't the scenario asked
+about.
+
+Verified via `streamlit.testing.v1.AppTest`: edited `init_d`, toggled the
+*other* checkbox off/on, confirmed the edit survived; then combined a
+library `bounded_range` (on `edge_id`, this dataset's first numeric
+column) with a custom `edge_count` tracker in one run and inspected the
+actual generated SQL, confirming both aggregates' keys
+(`max_edge_id`/`min_edge_id` and `edge_count`) and both viability checks
+appear in one combined struct/predicate, with FR-22 passing (17 paths,
+exact match). 140 tests still pass (no compiler-source file changed,
+`webapp/app.py` only).
+
 ## Completed: FR-34..FR-39, the workbench UI checklist (2026-08-17)
 
 Implements the six requirements added to `new_compiler_requirements/

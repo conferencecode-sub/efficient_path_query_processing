@@ -339,26 +339,26 @@ numeric_property_candidates = [
 _default_property = ("amount" if "amount" in numeric_property_candidates
                       else (numeric_property_candidates[0] if numeric_property_candidates else None))
 
-aggregate_source = st.radio(
-    "Aggregate source",
-    ["Library aggregate(s) (FR-13)", "Custom aggregate"],
-    horizontal=True)
+st.caption("Pick library aggregate(s), author a custom one, or both -- everything picked/authored "
+           "below combines into a single query (FR-34): the union of dictionary keys and the "
+           "conjunction of viability checks, so a path must satisfy all of them.")
 
 selected_library_aggregates: list[SelectiveAggregate] = []
 
-if aggregate_source == "Library aggregate(s) (FR-13)":
+use_library = st.checkbox("Use library aggregate(s) (FR-13)", value=True, key="use_library")
+if use_library:
     aggregate_kinds = st.multiselect(
         "Aggregate(s) -- pick more than one to combine them into one query (FR-34), "
         "e.g. bounded range + trail",
         ["Bounded range (max - min <= U)", "Adjacent-edge predicate", "Trail (no repeated edges)"],
-        default=["Bounded range (max - min <= U)"],
+        default=["Bounded range (max - min <= U)"], key="aggregate_kinds",
         help="Combining takes the union of the picked aggregates' dictionary keys and the "
              "conjunction of their viability checks -- a path must satisfy all of them. Picking "
              "the same kind twice isn't supported here (its dictionary keys would collide); use "
              "distinct properties across different kinds instead.")
     if not aggregate_kinds:
-        st.warning("Pick at least one library aggregate.")
-        st.stop()
+        st.warning("'Use library aggregate(s)' is checked but none are picked -- uncheck it, or "
+                   "pick at least one below.")
     for kind in aggregate_kinds:
         st.markdown(f"**{kind}**")
         if kind in ("Bounded range (max - min <= U)", "Adjacent-edge predicate"):
@@ -388,7 +388,10 @@ if aggregate_source == "Library aggregate(s) (FR-13)":
                 help="Any column works here -- trail semantics only need "
                      "equality, not order, so text ids are fine too.")
             selected_library_aggregates.append(trail_via_edge_ids(id_column=kind_id_column))
-else:
+
+custom_aggregate: SelectiveAggregate | None = None
+use_custom = st.checkbox("Author a custom aggregate", value=False, key="use_custom")
+if use_custom:
     st.caption("One expression per function (not one per transition pair -- Q1's regex alone "
                "has 100+ pairs, see CHECKLIST.md for why per-transition editing isn't offered "
                "here).")
@@ -414,7 +417,7 @@ else:
     _default_finalize_d = "D"
 
     custom_init_d = st.text_area(
-        "init_d()", value=_default_init_d, height=80,
+        "init_d()", value=_default_init_d, height=80, key="custom_init_d",
         help="**Role:** the dictionary's value at the anchor (path length 0), before any edge "
              "is taken. Nothing is in scope here (no `D`, no `e`) -- build it from "
              "literals/constants only. Its keys and their types (shown below) are inferred "
@@ -436,7 +439,7 @@ else:
         dictionary_keys = None  # fix init_d above before this can run
 
     custom_update_d = st.text_area(
-        "update_d(D, e)", value=_default_update_d, height=80,
+        "update_d(D, e)", value=_default_update_d, height=80, key="custom_update_d",
         help="**Role:** how `D` changes when extending a path by one edge `e`. Two accepted "
              "forms: a struct literal `{key: expr, ...}`, or one or more `D.<key> = <expr>` "
              "assignments, one per line (or separated by `;` on one line). Either way, you "
@@ -456,11 +459,11 @@ else:
             "is parsed, validated, or used by Compile & run below -- no split/merge execution "
             "plan is generated from it in this revision.")
         _merge_default_d = custom_init_d if dictionary_keys else "{last_time: NULL}"
-        merge_d1 = st.text_area("D1", value=_merge_default_d, height=60,
+        merge_d1 = st.text_area("D1", value=_merge_default_d, height=60, key="merge_d1",
                                  help="Sketch of the first fragment's dictionary -- same "
                                       "shape as this aggregate's own init_d by default, "
                                       "since both fragments run the same update_d above.")
-        merge_d2 = st.text_area("D2", value=_merge_default_d, height=60,
+        merge_d2 = st.text_area("D2", value=_merge_default_d, height=60, key="merge_d2",
                                  help="Sketch of the second fragment's dictionary.")
         if dictionary_keys:
             _merge_default_body = "{" + ", ".join(
@@ -468,14 +471,14 @@ else:
         else:
             _merge_default_body = "D1"
         merge_function_body = st.text_area(
-            "merge(D1, D2)", value=_merge_default_body, height=60,
+            "merge(D1, D2)", value=_merge_default_body, height=60, key="merge_function_body",
             help="Sketch of how D1 and D2 combine into one dictionary at the seam vertex. "
                  "Prefilled to just keep D1's value per key -- edit each key to whatever "
                  "combination makes sense for it (e.g. GREATEST/LEAST for a running "
                  "extremum, list_concat for a trail).")
 
     custom_is_viable_d = st.text_area(
-        "is_viable_d(D, e)", value=_default_is_viable_d, height=80,
+        "is_viable_d(D, e)", value=_default_is_viable_d, height=80, key="custom_is_viable_d",
         help="**Role:** the early-filtering check (Definition 8) -- a single Boolean "
              "expression over the dictionary *before* this hop's `update_d` and the "
              "candidate edge `e`. Returning `FALSE` prunes this extension immediately, before "
@@ -484,18 +487,30 @@ else:
              "edge); `D.last_time IS NULL OR e.time >= D.last_time` (non-decreasing timestamps).")
     custom_is_viable_d_final = st.text_area(
         "is_viable_d_final(D)", value=_default_is_viable_d_final, height=60,
+        key="custom_is_viable_d_final",
         help="**Role:** the one-time check applied to a completed path's final `D`, in "
              "addition to `is_viable_d` having held at every hop -- e.g. a total that can "
              "only be evaluated once the path is done.\n\n"
              "**Examples:** `TRUE` (no additional final check, the default); "
              "`D.total_amount >= 1000` (require a minimum total only at the end).")
     custom_finalize_d = st.text_area(
-        "finalize_d(D)", value=_default_finalize_d, height=60,
+        "finalize_d(D)", value=_default_finalize_d, height=60, key="custom_finalize_d",
         help="**Role:** what a matched path actually reports for `D` in the result set -- "
              "usually the whole dictionary, but it may project down to just the part worth "
              "returning.\n\n"
              "**Examples:** `D` (report the whole dictionary, the default); "
              "`D.edge_ids` (report only the trail, dropping any other tracked keys).")
+
+    if dictionary_keys is not None:
+        custom_aggregate = SelectiveAggregate(
+            dictionary_keys=dictionary_keys,
+            init_d=custom_init_d,
+            update_d=custom_update_d,
+            is_viable_d=custom_is_viable_d,
+            is_viable_d_final=custom_is_viable_d_final,
+            finalize_d=custom_finalize_d,
+            factorized=True,
+        )
 
 compare_to_standard = st.checkbox(
     "Also run the unoptimized (Stage E) query, to check it agrees with the optimized one (FR-22)",
@@ -523,25 +538,24 @@ try:
         # goes through the exact same Stage E/F code path as a real regex.
         relation = trivial_relation()
 
-    if aggregate_source == "Library aggregate(s) (FR-13)":
-        if len(selected_library_aggregates) == 1:
-            aggregate = selected_library_aggregates[0]
-        else:
-            # FR-34: more than one picked above -> combine into one aggregate.
-            aggregate = combine_library_aggregates(*selected_library_aggregates)
+    if use_custom and custom_aggregate is None:
+        st.error("Fix init_d above before running -- its keys couldn't be inferred.")
+        st.stop()
+
+    all_aggregates = list(selected_library_aggregates)
+    if use_custom and custom_aggregate is not None:
+        all_aggregates.append(custom_aggregate)
+
+    if not all_aggregates:
+        st.error("Pick at least one library aggregate, or check 'Author a custom aggregate', "
+                 "before running.")
+        st.stop()
+    elif len(all_aggregates) == 1:
+        aggregate = all_aggregates[0]
     else:
-        if dictionary_keys is None:
-            st.error("Fix init_d above before running -- its keys couldn't be inferred.")
-            st.stop()
-        aggregate = SelectiveAggregate(
-            dictionary_keys=dictionary_keys,
-            init_d=custom_init_d,
-            update_d=custom_update_d,
-            is_viable_d=custom_is_viable_d,
-            is_viable_d_final=custom_is_viable_d_final,
-            finalize_d=custom_finalize_d,
-            factorized=True,
-        )
+        # FR-34: more than one picked/authored above -> combine into one aggregate
+        # (library + library, library + custom, or custom + custom all go through here).
+        aggregate = combine_library_aggregates(*all_aggregates)
 
     conn = duckdb.connect()
     if uploaded:
