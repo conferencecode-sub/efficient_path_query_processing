@@ -29,6 +29,62 @@ but needs E working as its correctness baseline (NFR-2 compares standard vs.
 optimized output), so it comes after E/G. I (the workbench UI) comes last --
 it's glue over an already-working pipeline.
 
+## Completed: restructured Section 4 (renamed "ReCAP") around Factorized/General, per explicit user request (2026-08-18)
+
+Section 4 was "Selective aggregate": a "Use library aggregate(s)" checkbox
+and an "Author a custom aggregate" checkbox sat side by side, with
+Factorized/General only chosen *inside* the custom-aggregate branch. That
+allowed a real invalid combination the UI never prevented: checking both
+boxes with General mode picked would try to `combine_library_aggregates`
+a factorized library aggregate with a non-factorized General one, which
+that function's own docstring says it doesn't support -- it would only
+have failed deep in the pipeline, not at the point of the mistake.
+
+**New structure, per the user's own design (confirmed via a text sketch
+before building):** a top-level "Aggregate structure" radio
+(Factorized/General) replaces the old nested `custom_mode` radio.
+**General** is now a single, non-combinable authoring flow (the
+per-`(from_state, to_state)` table, one click away, no "Author a custom
+aggregate" checkbox needed to find it). **Factorized** keeps exactly
+today's combine behavior (pre-built aggregate(s) + a custom factorized
+one, both optional, combining via `combine_library_aggregates` (FR-34)
+same as before) -- per the user's explicit confirmation that pre-built
+and custom factorized aggregates should still combine. The invalid
+General+library combination is now structurally unreachable rather than
+just avoided by convention.
+
+**Also added, per the user's own insight about the table's semantics:**
+a "Preview: the CASE this table compiles to" expander in General mode,
+showing the *exact* `update_d`/`is_viable_d` macro bodies the table
+produces. This is possible with zero new SQL-generation code because the
+generated query already calls `update_d(p.D, p.q, t.to_state, e)` /
+`is_viable_d(p.D, p.q, t.to_state, e)` unconditionally (`MACRO_SIGNATURES`
+in `standard_sql.py` never varied by `factorized`) -- so the table
+genuinely is "just a CASE over already-in-scope parameters," confirmed by
+reading the code rather than assumed. `standard_sql._case_expression` was
+made public (`case_expression`, no leading underscore) as the second real
+caller of it. Investigated but did **not** adopt collapsing General mode's
+internal representation into one pre-built CASE string (i.e. always
+`factorized=True` with a CASE-shaped body): Stage F's `_flatten_update_d`
+needs the per-pair dict kept apart to build one `CASE` *per dictionary
+key* across pairs (dictionary flattening happens before any `CASE` is
+assembled, not after) -- `_decompose_struct` only accepts a bare struct
+literal, not a `CASE` returning one, the same class of bug already fixed
+for bare-`D` passthrough bodies. So `dict[TransitionPair, str]` /
+`factorized=False` stay exactly as they are; only the workbench's own
+widget layout changed.
+
+Verified via `streamlit.testing.v1.AppTest`, actually driving the app
+(not just checking it loads): switched to General mode, confirmed the
+preview expander renders a correct multi-branch `CASE` for both
+`update_d`/`is_viable_d`, clicked **Compile & run**, and got a real FR-22
+PASS (5,734 paths, standard vs. optimized agree) on the bundled dataset's
+default regex/table. Separately verified Factorized mode still combines
+a pre-built aggregate with a custom factorized one and gets a real FR-22
+PASS (7 paths). 151 tests still pass (no test-suite changes needed --
+this was a workbench-only restructuring, no compiler-core behavior
+changed).
+
 ## Completed: `transitions.is_ambiguous()` -- detects automata that can overcount path results (2026-08-18)
 
 Real finding, not a hypothetical: a `TransitionsRelation` can be

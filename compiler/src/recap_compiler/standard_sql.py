@@ -54,7 +54,11 @@ class StandardQuery:
     transitions_table: str
 
 
-def _case_expression(bodies: dict[TransitionPair, str], *, default: str) -> str:
+def case_expression(bodies: dict[TransitionPair, str], *, default: str) -> str:
+    """The `CASE` a human author would otherwise hand-write for a
+    non-factorized (per-transition-pair) body -- public so a caller (e.g.
+    the workbench's General-mode table) can preview exactly what gets
+    pasted into the macro body below, not just build it blindly."""
     branches = "\n".join(
         f"        WHEN from_state = {frm} AND to_state = {to} THEN ({body})"
         for (frm, to), body in sorted(bodies.items()))
@@ -80,12 +84,12 @@ def register_aggregate_macros(conn: duckdb.DuckDBPyConnection, aggregate: Select
     else:
         normalized_pairs = {pair: normalize_update_d_body(body, declared_keys=declared_keys)
                              for pair, body in aggregate.update_d.items()}
-        update_expr = _case_expression(normalized_pairs, default="D")
+        update_expr = case_expression(normalized_pairs, default="D")
     conn.execute(
         f"CREATE OR REPLACE MACRO update_d({', '.join(MACRO_SIGNATURES['update_d'])}) AS ({update_expr})")
 
     is_viable_expr = (aggregate.is_viable_d if aggregate.factorized
-                       else _case_expression(aggregate.is_viable_d, default="TRUE"))
+                       else case_expression(aggregate.is_viable_d, default="TRUE"))
     conn.execute(
         f"CREATE OR REPLACE MACRO is_viable_d({', '.join(MACRO_SIGNATURES['is_viable_d'])}) AS ({is_viable_expr})")
 

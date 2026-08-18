@@ -61,10 +61,13 @@ from recap_compiler.selective_aggregate import (
     adjacent_edge_predicate,
     bounded_range,
     combine_library_aggregates,
+    normalize_update_d_body,
     trail_via_edge_ids,
     validate_selective_aggregate,
 )
-from recap_compiler.standard_sql import build_standard_query, materialize_transitions, register_aggregate_macros
+from recap_compiler.standard_sql import (
+    build_standard_query, case_expression, materialize_transitions, register_aggregate_macros,
+)
 from recap_compiler.transitions import build_transitions_relation, guard_against_ambiguity, trivial_relation
 
 DEFAULT_DATASET = os.path.join(
@@ -329,7 +332,7 @@ length_bound = st.number_input("Length bound", min_value=0, max_value=20, value=
                                      "on purpose -- this regex's branching factor makes deep "
                                      "single-vertex runs expensive. See CHECKLIST.md.")
 
-st.header("4. Selective aggregate")
+st.header("4. ReCAP")
 
 non_property_columns = {"src", "dst", "label"}
 numeric_property_candidates = [
@@ -342,85 +345,29 @@ numeric_property_candidates = [
 _default_property = ("amount" if "amount" in numeric_property_candidates
                       else (numeric_property_candidates[0] if numeric_property_candidates else None))
 
-st.caption("Pick library aggregate(s), author a custom one, or both -- everything picked/authored "
-           "below combines into a single query (FR-34): the union of dictionary keys and the "
-           "conjunction of viability checks, so a path must satisfy all of them.")
+structure_mode = st.radio(
+    "Aggregate structure", ["Factorized", "General"], horizontal=True, key="structure_mode",
+    help="**Factorized**: `update_d`/`is_viable_d` are each one expression, applied "
+         "regardless of NFA state -- any number of pre-built and/or hand-written factorized "
+         "aggregates below combine into one query (FR-34). **General**: `update_d`/"
+         "`is_viable_d` may each differ per `(from_state, to_state)` transition pair (Figure "
+         "5's per-transition boxes), edited as a table -- a single aggregate on its own, since "
+         "combining (FR-34) requires every input to be factorized.")
 
 selected_library_aggregates: list[SelectiveAggregate] = []
-
-use_library = st.checkbox("Use library aggregate(s) (FR-13)", value=True, key="use_library")
-if use_library:
-    aggregate_kinds = st.multiselect(
-        "Aggregate(s) -- pick more than one to combine them into one query (FR-34), "
-        "e.g. bounded range + trail",
-        ["Bounded range (max - min <= U)", "Adjacent-edge predicate", "Trail (no repeated edges)"],
-        default=["Bounded range (max - min <= U)"], key="aggregate_kinds",
-        help="Combining takes the union of the picked aggregates' dictionary keys and the "
-             "conjunction of their viability checks -- a path must satisfy all of them. Picking "
-             "the same kind twice isn't supported here (its dictionary keys would collide); use "
-             "distinct properties across different kinds instead.")
-    if not aggregate_kinds:
-        st.warning("'Use library aggregate(s)' is checked but none are picked -- uncheck it, or "
-                   "pick at least one below.")
-    for kind in aggregate_kinds:
-        st.markdown(f"**{kind}**")
-        if kind in ("Bounded range (max - min <= U)", "Adjacent-edge predicate"):
-            if not numeric_property_candidates:
-                st.warning("No numeric edge columns found -- this aggregate needs one "
-                           "(GREATEST/LEAST/subtraction don't apply to text columns).")
-                st.stop()
-            kind_property = st.selectbox(
-                "Property", numeric_property_candidates, key=f"property::{kind}",
-                help="Only numeric columns are offered -- this aggregate does arithmetic "
-                     "(max/min/subtraction) on the property, which isn't meaningful for text.")
-            if kind == "Bounded range (max - min <= U)":
-                kind_upper_bound = st.number_input(
-                    "Upper bound U", value=500.0, key=f"upper_bound::{kind}")
-                selected_library_aggregates.append(
-                    bounded_range(property=kind_property, upper_bound=kind_upper_bound))
-            else:
-                kind_comparator = st.selectbox(
-                    "Comparator (edge vs. last edge)", [">=", "<="], index=0,
-                    key=f"comparator::{kind}")
-                selected_library_aggregates.append(
-                    adjacent_edge_predicate(property=kind_property, comparator=kind_comparator))
-        else:
-            kind_id_column = st.selectbox(
-                "Edge id column", edge_columns, key=f"id_column::{kind}",
-                index=edge_columns.index("edge_id") if "edge_id" in edge_columns else 0,
-                help="Any column works here -- trail semantics only need "
-                     "equality, not order, so text ids are fine too.")
-            selected_library_aggregates.append(trail_via_edge_ids(id_column=kind_id_column))
-
 custom_aggregate: SelectiveAggregate | None = None
-use_custom = st.checkbox("Author a custom aggregate", value=False, key="use_custom")
-if use_custom:
-    custom_mode = st.radio(
-        "Authoring mode", ["Factorized", "General"], horizontal=True, key="custom_mode",
-        help="**Factorized**: `update_d`/`is_viable_d` are each one expression, applied "
-             "regardless of NFA state -- fine when the constraint doesn't depend on where "
-             "the path is in the regex. **General**: `update_d`/`is_viable_d` may each "
-             "differ per `(from_state, to_state)` transition pair (Figure 5's per-transition "
-             "boxes), edited as a table below instead of one CASE-statement text block.")
-    st.caption("Convention: `D.<key>` for a dictionary field, `e.<column>` for an edge property"
-               + (", plus bare `from_state`/`to_state` in General mode" if custom_mode == "General" else "")
-               + ". **Dictionary keys are inferred automatically from `init_d`'s own struct "
-               "literal --** there's no separate table to keep in sync by hand. Edit `init_d`, "
-               "and the tracked keys (shown below it) follow.")
+dictionary_keys = None
 
-    if _default_property is not None:
-        _max_key, _min_key = f"max_{_default_property}", f"min_{_default_property}"
-        _default_init_d = f"{{{_max_key}: -1e308, {_min_key}: 1e308}}"
-        _default_update_d = (f"{{{_max_key}: GREATEST(D.{_max_key}, e.{_default_property}), "
-                              f"{_min_key}: LEAST(D.{_min_key}, e.{_default_property})}}")
-        _default_is_viable_d = (f"GREATEST(D.{_max_key}, e.{_default_property}) - "
-                                 f"LEAST(D.{_min_key}, e.{_default_property}) <= 500.0")
-        st.caption(f"Prefilled below: a working example equivalent to the library's "
-                   f"`bounded_range(property='{_default_property}', upper_bound=500.0)` -- edit "
-                   f"`init_d` and the other bodies together to build something else.")
-    else:
-        _default_init_d, _default_update_d, _default_is_viable_d = (
-            "{my_key: 0.0}", "{my_key: D.my_key}", "TRUE")
+if structure_mode == "General":
+    use_custom = True  # General is always exactly one authored aggregate, no combining.
+    st.caption("Convention: `D.<key>` for a dictionary field, `e.<column>` for an edge "
+               "property, plus bare `from_state`/`to_state` in the table below. **Dictionary "
+               "keys are inferred automatically from `init_d`'s own struct literal --** "
+               "there's no separate table to keep in sync by hand. Edit `init_d`, and the "
+               "tracked keys (shown below it) follow.")
+
+    _default_init_d = (f"{{max_{_default_property}: -1e308, min_{_default_property}: 1e308}}"
+                        if _default_property is not None else "{my_key: 0.0}")
     _default_is_viable_d_final = "TRUE"
     _default_finalize_d = "D"
 
@@ -446,61 +393,61 @@ if use_custom:
         _friendly_error(exc)
         dictionary_keys = None  # fix init_d above before this can run
 
-    custom_update_d_dict: dict[tuple[int, int], str] | None = None
-    custom_is_viable_d_dict: dict[tuple[int, int], str] | None = None
+    # update_d/is_viable_d may differ per (from_state, to_state) transition
+    # pair, edited as one table instead of a per-pair text box each -- the
+    # scale problem that kept non-factorized authoring out of the workbench
+    # until FR-40. `relation` may be None (no regex picked in Section 2);
+    # fall back to the same trivial_relation() Stage A/G already use for a
+    # regex-less query, so the table still has something to show (a single
+    # (0,0) row).
+    _table_relation = relation if relation is not None else trivial_relation()
+    _pairs = sorted({(frm, to) for frm, to, _label in _table_relation.rows})
+    _labels_by_pair: dict[tuple[int, int], set[str]] = {}
+    for _frm, _to, _label in _table_relation.rows:
+        _labels_by_pair.setdefault((_frm, _to), set()).add(_label)
 
-    if custom_mode == "Factorized":
-        custom_update_d = st.text_area(
-            "update_d(D, e)", value=_default_update_d, height=80, key="custom_update_d",
-            help="**Role:** how `D` changes when extending a path by one edge `e`. Two accepted "
-                 "forms: a struct literal `{key: expr, ...}`, or one or more `D.<key> = <expr>` "
-                 "assignments, one per line (or separated by `;` on one line). Either way, you "
-                 "don't have to mention every key from `init_d`: leave one out and it "
-                 "automatically keeps its previous value unchanged instead of being removed "
-                 "from `D`. Accumulator-style assignments may also use `+=`/`-=`/`*=`//=` "
-                 "(expanded to the equivalent `D.key = D.key <op> (expr)` before anything else "
-                 "happens to it). Only `D.<key>` (dot notation) is recognized, not `D[\"key\"]`."
-                 "\n\n**Examples:** `{last_time: e.time}` (struct form); "
-                 "`D.total_amount += e.amount` (assignment form with augmented assignment).")
-    else:
-        # General (Figure 5): update_d/is_viable_d may differ per (from_state,
-        # to_state) transition pair, edited as one table instead of a per-pair
-        # text box each -- the scale problem that kept non-factorized authoring
-        # out of the workbench until now. `relation` may be None (no regex
-        # picked in Section 2); fall back to the same trivial_relation() Stage
-        # A/G already use for a regex-less query, so the table still has
-        # something to show (a single (0,0) row).
-        _table_relation = relation if relation is not None else trivial_relation()
-        _pairs = sorted({(frm, to) for frm, to, _label in _table_relation.rows})
-        _labels_by_pair: dict[tuple[int, int], set[str]] = {}
-        for _frm, _to, _label in _table_relation.rows:
-            _labels_by_pair.setdefault((_frm, _to), set()).add(_label)
+    if len(_pairs) > 50:
+        st.warning(f"This automaton has {len(_pairs)} transition pairs -- editing all of "
+                   "them here may be slow. A simpler/shorter regex produces fewer pairs.")
 
-        if len(_pairs) > 50:
-            st.warning(f"This automaton has {len(_pairs)} transition pairs -- editing all of "
-                       "them here may be slow. A simpler/shorter regex produces fewer pairs.")
+    st.caption(f"One row per `(from\\_state, to\\_state)` transition pair ({len(_pairs)} "
+               "total). Unedited rows default to `D` (unchanged) / `TRUE` (always viable) "
+               "-- edit only the rows that need real logic. `labels` is shown for context "
+               "and isn't itself editable.")
+    _default_table = pd.DataFrame([
+        {"from_state": frm, "to_state": to,
+         "labels": ", ".join(sorted(_labels_by_pair[(frm, to)])),
+         "update_d": "D", "is_viable_d": "TRUE"}
+        for frm, to in _pairs
+    ])
+    _table_key = f"general_table::{regex if use_regex else '(no regex)'}"
+    _edited_table = st.data_editor(
+        _default_table, key=_table_key, hide_index=True, width="stretch",
+        num_rows="fixed", disabled=["from_state", "to_state", "labels"])
 
-        st.caption(f"One row per `(from\\_state, to\\_state)` transition pair ({len(_pairs)} "
-                   "total). Unedited rows default to `D` (unchanged) / `TRUE` (always viable) "
-                   "-- edit only the rows that need real logic. `labels` is shown for context "
-                   "and isn't itself editable.")
-        _default_table = pd.DataFrame([
-            {"from_state": frm, "to_state": to,
-             "labels": ", ".join(sorted(_labels_by_pair[(frm, to)])),
-             "update_d": "D", "is_viable_d": "TRUE"}
-            for frm, to in _pairs
-        ])
-        _table_key = f"general_table::{regex if use_regex else '(no regex)'}"
-        _edited_table = st.data_editor(
-            _default_table, key=_table_key, hide_index=True, width="stretch",
-            num_rows="fixed", disabled=["from_state", "to_state", "labels"])
+    custom_update_d_dict: dict[tuple[int, int], str] = {}
+    custom_is_viable_d_dict: dict[tuple[int, int], str] = {}
+    for _, _row in _edited_table.iterrows():
+        _pair = (int(_row["from_state"]), int(_row["to_state"]))
+        custom_update_d_dict[_pair] = (_row["update_d"] or "D").strip() or "D"
+        custom_is_viable_d_dict[_pair] = (_row["is_viable_d"] or "TRUE").strip() or "TRUE"
 
-        custom_update_d_dict = {}
-        custom_is_viable_d_dict = {}
-        for _, _row in _edited_table.iterrows():
-            _pair = (int(_row["from_state"]), int(_row["to_state"]))
-            custom_update_d_dict[_pair] = (_row["update_d"] or "D").strip() or "D"
-            custom_is_viable_d_dict[_pair] = (_row["is_viable_d"] or "TRUE").strip() or "TRUE"
+    if dictionary_keys is not None:
+        with st.expander("Preview: the CASE this table compiles to"):
+            st.caption("Exactly what gets pasted into the `update_d`/`is_viable_d` macro "
+                       "bodies below -- `from_state`/`to_state` are real parameters of both, "
+                       "passed by every generated query regardless of aggregate structure, so "
+                       "this table is nothing more than a `CASE` over them.")
+            try:
+                _declared_keys = [k.name for k in dictionary_keys]
+                _normalized_pairs = {pair: normalize_update_d_body(body, declared_keys=_declared_keys)
+                                      for pair, body in custom_update_d_dict.items()}
+                st.code("update_d(D, from_state, to_state, e) AS\n"
+                        + case_expression(_normalized_pairs, default="D"), language="sql")
+                st.code("is_viable_d(D, from_state, to_state, e) AS\n"
+                        + case_expression(custom_is_viable_d_dict, default="TRUE"), language="sql")
+            except RecapCompilerError as exc:
+                st.caption(f"(preview unavailable until every row above is valid: {exc})")
 
     with st.expander("Merge-function authoring box (FR-35, sketch only -- not run)"):
         st.caption(
@@ -528,19 +475,6 @@ if use_custom:
                  "combination makes sense for it (e.g. GREATEST/LEAST for a running "
                  "extremum, list_concat for a trail).")
 
-    if custom_mode == "Factorized":
-        custom_is_viable_d = st.text_area(
-            "is_viable_d(D, e)", value=_default_is_viable_d, height=80, key="custom_is_viable_d",
-            help="**Role:** the early-filtering check (Definition 8) -- a single Boolean "
-                 "expression over the dictionary *before* this hop's `update_d` and the "
-                 "candidate edge `e`. Returning `FALSE` prunes this extension immediately, "
-                 "before it's ever added to the path.\n\n"
-                 "**Examples:** `NOT list_contains(D.edge_ids, e.id)` (trail: reject a repeated "
-                 "edge); `D.last_time IS NULL OR e.time >= D.last_time` (non-decreasing "
-                 "timestamps).")
-    # In General mode, is_viable_d is already captured per-row in the table above
-    # (custom_is_viable_d_dict) -- no separate single-body widget to show here.
-
     custom_is_viable_d_final = st.text_area(
         "is_viable_d_final(D)", value=_default_is_viable_d_final, height=60,
         key="custom_is_viable_d_final",
@@ -558,7 +492,177 @@ if use_custom:
              "`D.edge_ids` (report only the trail, dropping any other tracked keys).")
 
     if dictionary_keys is not None:
-        if custom_mode == "Factorized":
+        custom_aggregate = SelectiveAggregate(
+            dictionary_keys=dictionary_keys,
+            init_d=custom_init_d,
+            update_d=custom_update_d_dict,
+            is_viable_d=custom_is_viable_d_dict,
+            is_viable_d_final=custom_is_viable_d_final,
+            finalize_d=custom_finalize_d,
+            factorized=False,
+        )
+
+else:  # Factorized
+    st.caption("Pick pre-built aggregate(s), author a custom factorized one, or both -- "
+               "everything picked/authored below combines into a single query (FR-34): the "
+               "union of dictionary keys and the conjunction of viability checks, so a path "
+               "must satisfy all of them.")
+
+    use_library = st.checkbox("Use pre-built aggregate(s) (FR-13)", value=True, key="use_library")
+    if use_library:
+        aggregate_kinds = st.multiselect(
+            "Aggregate(s) -- pick more than one to combine them into one query (FR-34), "
+            "e.g. bounded range + trail",
+            ["Bounded range (max - min <= U)", "Adjacent-edge predicate", "Trail (no repeated edges)"],
+            default=["Bounded range (max - min <= U)"], key="aggregate_kinds",
+            help="Combining takes the union of the picked aggregates' dictionary keys and the "
+                 "conjunction of their viability checks -- a path must satisfy all of them. "
+                 "Picking the same kind twice isn't supported here (its dictionary keys would "
+                 "collide); use distinct properties across different kinds instead.")
+        if not aggregate_kinds:
+            st.warning("'Use pre-built aggregate(s)' is checked but none are picked -- uncheck "
+                       "it, or pick at least one below.")
+        for kind in aggregate_kinds:
+            st.markdown(f"**{kind}**")
+            if kind in ("Bounded range (max - min <= U)", "Adjacent-edge predicate"):
+                if not numeric_property_candidates:
+                    st.warning("No numeric edge columns found -- this aggregate needs one "
+                               "(GREATEST/LEAST/subtraction don't apply to text columns).")
+                    st.stop()
+                kind_property = st.selectbox(
+                    "Property", numeric_property_candidates, key=f"property::{kind}",
+                    help="Only numeric columns are offered -- this aggregate does arithmetic "
+                         "(max/min/subtraction) on the property, which isn't meaningful for text.")
+                if kind == "Bounded range (max - min <= U)":
+                    kind_upper_bound = st.number_input(
+                        "Upper bound U", value=500.0, key=f"upper_bound::{kind}")
+                    selected_library_aggregates.append(
+                        bounded_range(property=kind_property, upper_bound=kind_upper_bound))
+                else:
+                    kind_comparator = st.selectbox(
+                        "Comparator (edge vs. last edge)", [">=", "<="], index=0,
+                        key=f"comparator::{kind}")
+                    selected_library_aggregates.append(
+                        adjacent_edge_predicate(property=kind_property, comparator=kind_comparator))
+            else:
+                kind_id_column = st.selectbox(
+                    "Edge id column", edge_columns, key=f"id_column::{kind}",
+                    index=edge_columns.index("edge_id") if "edge_id" in edge_columns else 0,
+                    help="Any column works here -- trail semantics only need "
+                         "equality, not order, so text ids are fine too.")
+                selected_library_aggregates.append(trail_via_edge_ids(id_column=kind_id_column))
+
+    use_custom = st.checkbox("Author a custom factorized aggregate", value=False, key="use_custom")
+    if use_custom:
+        st.caption("Convention: `D.<key>` for a dictionary field, `e.<column>` for an edge "
+                   "property. **Dictionary keys are inferred automatically from `init_d`'s own "
+                   "struct literal --** there's no separate table to keep in sync by hand. Edit "
+                   "`init_d`, and the tracked keys (shown below it) follow.")
+
+        if _default_property is not None:
+            _max_key, _min_key = f"max_{_default_property}", f"min_{_default_property}"
+            _default_init_d = f"{{{_max_key}: -1e308, {_min_key}: 1e308}}"
+            _default_update_d = (f"{{{_max_key}: GREATEST(D.{_max_key}, e.{_default_property}), "
+                                  f"{_min_key}: LEAST(D.{_min_key}, e.{_default_property})}}")
+            _default_is_viable_d = (f"GREATEST(D.{_max_key}, e.{_default_property}) - "
+                                     f"LEAST(D.{_min_key}, e.{_default_property}) <= 500.0")
+            st.caption(f"Prefilled below: a working example equivalent to the library's "
+                       f"`bounded_range(property='{_default_property}', upper_bound=500.0)` -- "
+                       f"edit `init_d` and the other bodies together to build something else.")
+        else:
+            _default_init_d, _default_update_d, _default_is_viable_d = (
+                "{my_key: 0.0}", "{my_key: D.my_key}", "TRUE")
+        _default_is_viable_d_final = "TRUE"
+        _default_finalize_d = "D"
+
+        custom_init_d = st.text_area(
+            "init_d()", value=_default_init_d, height=80, key="custom_init_d",
+            help="**Role:** the dictionary's value at the anchor (path length 0), before any "
+                 "edge is taken. Nothing is in scope here (no `D`, no `e`) -- build it from "
+                 "literals/constants only. Its keys and their types (shown below) are inferred "
+                 "directly from this struct literal.\n\n"
+                 "**Examples:** `{last_time: NULL}` (one nullable DOUBLE key); "
+                 "`{max_amt: -1e308, min_amt: 1e308}` (two DOUBLE keys, seeded so the first "
+                 "real edge always widens the range).")
+
+        try:
+            dictionary_keys = _infer_dictionary_keys(custom_init_d)
+            if dictionary_keys:
+                st.dataframe(pd.DataFrame([{"name": k.name, "sql_type": k.sql_type} for k in dictionary_keys]),
+                             hide_index=True)
+            else:
+                st.caption("(`init_d` doesn't evaluate to a struct, so this aggregate tracks "
+                           "no dictionary keys -- fine for an aggregate that only checks the "
+                           "path shape.)")
+        except RecapCompilerError as exc:
+            _friendly_error(exc)
+            dictionary_keys = None  # fix init_d above before this can run
+
+        custom_update_d = st.text_area(
+            "update_d(D, e)", value=_default_update_d, height=80, key="custom_update_d",
+            help="**Role:** how `D` changes when extending a path by one edge `e`. Two accepted "
+                 "forms: a struct literal `{key: expr, ...}`, or one or more `D.<key> = <expr>` "
+                 "assignments, one per line (or separated by `;` on one line). Either way, you "
+                 "don't have to mention every key from `init_d`: leave one out and it "
+                 "automatically keeps its previous value unchanged instead of being removed "
+                 "from `D`. Accumulator-style assignments may also use `+=`/`-=`/`*=`//=` "
+                 "(expanded to the equivalent `D.key = D.key <op> (expr)` before anything else "
+                 "happens to it). Only `D.<key>` (dot notation) is recognized, not `D[\"key\"]`."
+                 "\n\n**Examples:** `{last_time: e.time}` (struct form); "
+                 "`D.total_amount += e.amount` (assignment form with augmented assignment).")
+
+        with st.expander("Merge-function authoring box (FR-35, sketch only -- not run)"):
+            st.caption(
+                "FR-35: sketch how two fragments *both running the `update_d` above* would "
+                "compose their dictionaries at a seam (e.g. for a split/wavefront-style plan, "
+                "R4.O2 -- see FR-7 and Section 12 non-goal 3). Authoring aid only: nothing "
+                "here is parsed, validated, or used by Compile & run below -- no split/merge "
+                "execution plan is generated from it in this revision.")
+            _merge_default_d = custom_init_d if dictionary_keys else "{last_time: NULL}"
+            merge_d1 = st.text_area("D1", value=_merge_default_d, height=60, key="merge_d1",
+                                     help="Sketch of the first fragment's dictionary -- same "
+                                          "shape as this aggregate's own init_d by default, "
+                                          "since both fragments run the same update_d above.")
+            merge_d2 = st.text_area("D2", value=_merge_default_d, height=60, key="merge_d2",
+                                     help="Sketch of the second fragment's dictionary.")
+            if dictionary_keys:
+                _merge_default_body = "{" + ", ".join(
+                    f"{k.name}: D1.{k.name}" for k in dictionary_keys) + "}"
+            else:
+                _merge_default_body = "D1"
+            merge_function_body = st.text_area(
+                "merge(D1, D2)", value=_merge_default_body, height=60, key="merge_function_body",
+                help="Sketch of how D1 and D2 combine into one dictionary at the seam vertex. "
+                     "Prefilled to just keep D1's value per key -- edit each key to whatever "
+                     "combination makes sense for it (e.g. GREATEST/LEAST for a running "
+                     "extremum, list_concat for a trail).")
+
+        custom_is_viable_d = st.text_area(
+            "is_viable_d(D, e)", value=_default_is_viable_d, height=80, key="custom_is_viable_d",
+            help="**Role:** the early-filtering check (Definition 8) -- a single Boolean "
+                 "expression over the dictionary *before* this hop's `update_d` and the "
+                 "candidate edge `e`. Returning `FALSE` prunes this extension immediately, "
+                 "before it's ever added to the path.\n\n"
+                 "**Examples:** `NOT list_contains(D.edge_ids, e.id)` (trail: reject a "
+                 "repeated edge); `D.last_time IS NULL OR e.time >= D.last_time` "
+                 "(non-decreasing timestamps).")
+        custom_is_viable_d_final = st.text_area(
+            "is_viable_d_final(D)", value=_default_is_viable_d_final, height=60,
+            key="custom_is_viable_d_final",
+            help="**Role:** the one-time check applied to a completed path's final `D`, in "
+                 "addition to `is_viable_d` having held at every hop -- e.g. a total that can "
+                 "only be evaluated once the path is done.\n\n"
+                 "**Examples:** `TRUE` (no additional final check, the default); "
+                 "`D.total_amount >= 1000` (require a minimum total only at the end).")
+        custom_finalize_d = st.text_area(
+            "finalize_d(D)", value=_default_finalize_d, height=60, key="custom_finalize_d",
+            help="**Role:** what a matched path actually reports for `D` in the result set -- "
+                 "usually the whole dictionary, but it may project down to just the part worth "
+                 "returning.\n\n"
+                 "**Examples:** `D` (report the whole dictionary, the default); "
+                 "`D.edge_ids` (report only the trail, dropping any other tracked keys).")
+
+        if dictionary_keys is not None:
             custom_aggregate = SelectiveAggregate(
                 dictionary_keys=dictionary_keys,
                 init_d=custom_init_d,
@@ -567,16 +671,6 @@ if use_custom:
                 is_viable_d_final=custom_is_viable_d_final,
                 finalize_d=custom_finalize_d,
                 factorized=True,
-            )
-        else:
-            custom_aggregate = SelectiveAggregate(
-                dictionary_keys=dictionary_keys,
-                init_d=custom_init_d,
-                update_d=custom_update_d_dict,
-                is_viable_d=custom_is_viable_d_dict,
-                is_viable_d_final=custom_is_viable_d_final,
-                finalize_d=custom_finalize_d,
-                factorized=False,
             )
 
 compare_to_standard = st.checkbox(
