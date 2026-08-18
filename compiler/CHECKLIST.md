@@ -52,7 +52,12 @@ unrelated work; `compiler_reqs.md` itself has no trace of Module J left.
   intentionally changed), 1 new test added in `test_ingestion.py`.
 - **FR-35** (`webapp/app.py`): a `D1`/`D2`/`merge(D1, D2)` text-area expander,
   explicitly labeled "sketch only -- not run" -- authoring aid, not wired
-  into Stage E/F, per Section 12 non-goal 3.
+  into Stage E/F, per Section 12 non-goal 3. **Placement amended same day**
+  per user feedback: moved from a separate, always-visible section to
+  directly beneath `update_d` in the custom-aggregate flow only (absent
+  in library-aggregate mode), with `D1`/`D2` defaults seeded from the
+  author's own `init_d` keys instead of a generic example -- see
+  `compiler_reqs.md`'s FR-35 and its `CHANGELOG.md`.
 - **FR-36** (`webapp/app.py`): a regex-syntax-help expander next to the
   regex input, covering `|`, concatenation, `*`, `+`, `?`, `{m,n}`, and
   quoted labels.

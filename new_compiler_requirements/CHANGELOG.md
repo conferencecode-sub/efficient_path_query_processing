@@ -35,3 +35,17 @@ numbered after the reserved block for the same reason.
 (semantics-preservation), and Section 13 (verifier stretch objectives) — none
 of the checklist items touched generated-SQL semantics, only authoring-time
 UI and one start-vertex default.
+
+## 2026-08-17 — FR-34..FR-39 implemented in `compiler/`; FR-35 placement amended
+
+Implemented all six in the actual webapp/compiler code (previously only
+specified). See `compiler/CHECKLIST.md`'s dated entry for the full
+implementation summary and how it was verified.
+
+While implementing FR-35, the user asked whether the merge-function box
+could sit explicitly under `update_d` when the author is writing a custom
+aggregate, rather than as a separate, always-visible section — a better
+placement than what was specified. **FR-35 amended** accordingly: the box
+now appears only in the custom-aggregate authoring flow, directly beneath
+`update_d`, with its `D1`/`D2` defaults seeded from the author's own
+`init_d` keys instead of a generic example.

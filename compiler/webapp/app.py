@@ -447,6 +447,33 @@ else:
              "`D.<key>` (dot notation) is recognized, not `D[\"key\"]`.\n\n"
              "**Examples:** `{last_time: e.time}` (struct form); "
              "`D.total_amount += e.amount` (assignment form with augmented assignment).")
+
+    with st.expander("Merge-function authoring box (FR-35, sketch only -- not run)"):
+        st.caption(
+            "FR-35: sketch how two fragments *both running the `update_d` above* would "
+            "compose their dictionaries at a seam (e.g. for a split/wavefront-style plan, "
+            "R4.O2 -- see FR-7 and Section 12 non-goal 3). Authoring aid only: nothing here "
+            "is parsed, validated, or used by Compile & run below -- no split/merge execution "
+            "plan is generated from it in this revision.")
+        _merge_default_d = custom_init_d if dictionary_keys else "{last_time: NULL}"
+        merge_d1 = st.text_area("D1", value=_merge_default_d, height=60,
+                                 help="Sketch of the first fragment's dictionary -- same "
+                                      "shape as this aggregate's own init_d by default, "
+                                      "since both fragments run the same update_d above.")
+        merge_d2 = st.text_area("D2", value=_merge_default_d, height=60,
+                                 help="Sketch of the second fragment's dictionary.")
+        if dictionary_keys:
+            _merge_default_body = "{" + ", ".join(
+                f"{k.name}: D1.{k.name}" for k in dictionary_keys) + "}"
+        else:
+            _merge_default_body = "D1"
+        merge_function_body = st.text_area(
+            "merge(D1, D2)", value=_merge_default_body, height=60,
+            help="Sketch of how D1 and D2 combine into one dictionary at the seam vertex. "
+                 "Prefilled to just keep D1's value per key -- edit each key to whatever "
+                 "combination makes sense for it (e.g. GREATEST/LEAST for a running "
+                 "extremum, list_concat for a trail).")
+
     custom_is_viable_d = st.text_area(
         "is_viable_d(D, e)", value=_default_is_viable_d, height=80,
         help="**Role:** the early-filtering check (Definition 8) -- a single Boolean "
@@ -469,20 +496,6 @@ else:
              "returning.\n\n"
              "**Examples:** `D` (report the whole dictionary, the default); "
              "`D.edge_ids` (report only the trail, dropping any other tracked keys).")
-
-with st.expander("Merge-function authoring box (FR-35, sketch only -- not run)"):
-    st.caption(
-        "FR-35: sketch how two fragments' dictionaries would compose at a seam (e.g. for a "
-        "split/wavefront-style plan, R4.O2 -- see FR-7 and Section 12 non-goal 3). This is an "
-        "authoring aid only: nothing typed here is parsed, validated, or used by Compile & run "
-        "below -- no split/merge execution plan is generated from it in this revision.")
-    merge_d1 = st.text_area("D1", value="{last_time: NULL}", height=60,
-                             help="Sketch of the first fragment's dictionary shape.")
-    merge_d2 = st.text_area("D2", value="{last_time: NULL}", height=60,
-                             help="Sketch of the second fragment's dictionary shape.")
-    merge_function_body = st.text_area(
-        "merge(D1, D2)", value="{last_time: GREATEST(D1.last_time, D2.last_time)}", height=60,
-        help="Sketch of how D1 and D2 would combine into one dictionary at the seam vertex.")
 
 compare_to_standard = st.checkbox(
     "Also run the unoptimized (Stage E) query, to check it agrees with the optimized one (FR-22)",
