@@ -52,6 +52,7 @@ import streamlit as st
 from recap_compiler.errors import RecapCompilerError, RefError
 from recap_compiler.execution import run_query
 from recap_compiler.ingestion import load_graph, select_start_vertices, set_trivial_label_column
+from recap_compiler.llm_proposer import propose_general_aggregate
 from recap_compiler.optimizer import build_optimized_query
 from recap_compiler.profiling import TimingBreakdown, timed_stage
 from recap_compiler.regex_frontend import compile_regex_to_nfa
@@ -261,7 +262,27 @@ with st.sidebar:
 st.subheader(f"Edge data (first {EDGE_PREVIEW_ROWS} rows)")
 st.dataframe(edge_preview, height=250)
 
-st.header("2. Label regex (optional)")
+st.header("2. Start vertices and length bound")
+start_mode = st.radio("Start vertices", ["Explicit vertex id(s)", "Out-degree band"], horizontal=True)
+if start_mode == "Explicit vertex id(s)":
+    start_vertex_ids_text = st.text_input(
+        "Start vertex id(s)", value="383",
+        help="One id, or several separated by `;` (e.g. `383;12;97`) (FR-37). Leave empty to "
+             "start from every distinct src vertex in the Edges table instead (FR-4's "
+             "all-vertices default).")
+    degree_band = None
+else:
+    degree_band = st.selectbox("Out-degree band", ["low", "medium", "high"], index=2)
+    start_vertex_ids_text = None
+
+length_bound = st.number_input("Length bound", min_value=0, max_value=20, value=3, step=1,
+                                help="Max number of edges in a path (path_length starts at 0, "
+                                     "at the start vertex, before any edge is taken). Kept small "
+                                     "on purpose -- this regex's branching factor makes deep "
+                                     "single-vertex runs expensive. See CHECKLIST.md.")
+
+st.header("3. ReCAP")
+st.subheader("Label regex (optional)")
 st.caption("A selective aggregate doesn't inherently need a regex/NFA -- pick a label column here "
            "only if this query should also filter by a path through specific edge labels.")
 
@@ -299,7 +320,12 @@ if use_regex:
             "-- e.g. `(\"North America\"|Asia)+`\n\n"
             f"Example from this dataset's own alphabet: `{default_regex}`")
     try:
-        nfa = compile_regex_to_nfa(regex)
+        # minimize=False here regardless of the "Minimize the automaton
+        # first" checkbox below (General mode only) -- this build is just
+        # to validate the regex parses and to guard against an ambiguous
+        # default automaton; General mode's own checkbox rebuilds its own
+        # table-scoped relation afterward, once it's actually in scope.
+        nfa = compile_regex_to_nfa(regex, minimize=False)
         relation = build_transitions_relation(nfa)
         nfa, relation, ambiguity_warning = guard_against_ambiguity(regex, nfa, relation)
         if ambiguity_warning:
@@ -313,26 +339,7 @@ else:
     regex = None
     relation = None
 
-st.header("3. Start vertices and length bound")
-start_mode = st.radio("Start vertices", ["Explicit vertex id(s)", "Out-degree band"], horizontal=True)
-if start_mode == "Explicit vertex id(s)":
-    start_vertex_ids_text = st.text_input(
-        "Start vertex id(s)", value="383",
-        help="One id, or several separated by `;` (e.g. `383;12;97`) (FR-37). Leave empty to "
-             "start from every distinct src vertex in the Edges table instead (FR-4's "
-             "all-vertices default).")
-    degree_band = None
-else:
-    degree_band = st.selectbox("Out-degree band", ["low", "medium", "high"], index=2)
-    start_vertex_ids_text = None
-
-length_bound = st.number_input("Length bound", min_value=0, max_value=20, value=3, step=1,
-                                help="Max number of edges in a path (path_length starts at 0, "
-                                     "at the start vertex, before any edge is taken). Kept small "
-                                     "on purpose -- this regex's branching factor makes deep "
-                                     "single-vertex runs expensive. See CHECKLIST.md.")
-
-st.header("4. ReCAP")
+st.subheader("Selective aggregate")
 
 non_property_columns = {"src", "dst", "label"}
 numeric_property_candidates = [
@@ -400,11 +407,107 @@ if structure_mode == "General":
     # fall back to the same trivial_relation() Stage A/G already use for a
     # regex-less query, so the table still has something to show (a single
     # (0,0) row).
-    _table_relation = relation if relation is not None else trivial_relation()
+    minimize_automaton = False
+    if use_regex:
+        minimize_automaton = st.checkbox(
+            "Minimize the automaton first", value=True, key="minimize_automaton",
+            help="Collapses the regex's automaton to its minimal DFA before building the "
+                 "table below -- typically far fewer transition pairs to author (Q1's own "
+                 "regex, e.g., goes from 36 states/95 transitions down to 3 states/10), and "
+                 "a minimal DFA is always unambiguous (never overcounts results). This "
+                 "changes what `from_state`/`to_state` actually number, so toggling it "
+                 "resets the table below -- fill it in after deciding, not before.")
+
+    with st.expander("Example: filling in this table (\\(Q_B\\), from the paper's Figure 5)"):
+        st.caption(
+            "Regex `Domestic+ Foreign` compiles to `T = {(1,2,Domestic), (2,2,Domestic), "
+            "(2,3,Foreign)}`, `q0=1`, accepting `{3}`. The aggregate tracks `last_time` and "
+            "`edge_ids` (trail); `update_d` is the *same* on every row (it doesn't depend on "
+            "state), but `is_viable_d` differs: transitions staying inside the `Domestic+` "
+            "run (`2→2`) allow a ±2-day gap, while the one final hop into `Foreign` "
+            "(`2→3`) allows ±3 days -- exactly the per-transition distinction a single "
+            "text box couldn't express.")
+        st.dataframe(pd.DataFrame([
+            {"from_state": 1, "to_state": 2,
+             "update_d": "{last_time: e.time, edge_ids: list_append(D.edge_ids, e.id)}",
+             "is_viable_d": "NOT list_contains(D.edge_ids, e.id)"},
+            {"from_state": 2, "to_state": 2,
+             "update_d": "{last_time: e.time, edge_ids: list_append(D.edge_ids, e.id)}",
+             "is_viable_d": "NOT list_contains(D.edge_ids, e.id) "
+                            "AND abs(e.time - D.last_time) <= 2"},
+            {"from_state": 2, "to_state": 3,
+             "update_d": "{last_time: e.time, edge_ids: list_append(D.edge_ids, e.id)}",
+             "is_viable_d": "NOT list_contains(D.edge_ids, e.id) "
+                            "AND abs(e.time - D.last_time) <= 3"},
+        ]), hide_index=True)
+
+    if minimize_automaton and use_regex:
+        _table_relation = build_transitions_relation(compile_regex_to_nfa(regex, minimize=True))
+    else:
+        _table_relation = relation if relation is not None else trivial_relation()
     _pairs = sorted({(frm, to) for frm, to, _label in _table_relation.rows})
     _labels_by_pair: dict[tuple[int, int], set[str]] = {}
     for _frm, _to, _label in _table_relation.rows:
         _labels_by_pair.setdefault((_frm, _to), set()).add(_label)
+
+    with st.expander("Draft with LLM (Module J, optional)"):
+        st.caption(
+            "Optional: describe the constraint in plain English (and/or SQL-style), and a "
+            "hosted Claude model drafts `init_d`/`update_d`/`is_viable_d`/`is_viable_d_final`/"
+            "`finalize_d` -- seeing this automaton's own transition pairs above, the edge "
+            "columns available, and the same function specs/guiding example shown above. "
+            "**No privileged path:** whatever it drafts lands in the exact same boxes below "
+            "that you'd type into by hand, and goes through the same validation as any "
+            "hand-written aggregate before Compile & run. `is_viable_d`/`is_viable_d_final` "
+            "are pruning checks -- an unsound one silently drops real results with no visible "
+            "symptom, so any pair (or the final check) the model isn't confident about is "
+            "overridden to `TRUE` (never pruned) here; its original attempt is shown below, "
+            "flagged, for you to review and promote by hand if you judge it sound.")
+        st.text_area(
+            "Constraint (plain English)", key="llm_constraint_description", height=80,
+            placeholder='e.g. "the running total of e.amount must never exceed 1000, and no '
+                        'edge may be revisited"')
+        def _run_llm_draft():
+            # A callback, not an inline `if st.button(...)` body: this needs
+            # to write to `custom_init_d`/etc.'s own session_state keys, and
+            # those widgets are declared *earlier* in the script than this
+            # button -- setting their session_state after they've already
+            # rendered in the same run raises StreamlitAPIException. A
+            # button's `on_click` callback runs *before* the script's next
+            # top-to-bottom pass (which re-instantiates every widget from
+            # scratch), so it's the one place such a write is legal.
+            try:
+                draft = propose_general_aggregate(
+                    constraint_description=st.session_state.get("llm_constraint_description", ""),
+                    transition_pairs=_pairs, labels_by_pair=_labels_by_pair,
+                    edge_columns={c: column_types[c] for c in edge_columns
+                                  if c not in {"src", "dst", "edge_id"}})
+            except RecapCompilerError as exc:
+                st.session_state["_general_table_draft_error"] = exc
+                return
+            st.session_state["_general_table_draft_error"] = None
+            st.session_state["custom_init_d"] = draft.init_d
+            st.session_state["custom_is_viable_d_final"] = draft.is_viable_d_final
+            st.session_state["custom_finalize_d"] = draft.finalize_d
+            st.session_state["_general_table_draft"] = draft
+            st.session_state["_general_table_draft_version"] = (
+                st.session_state.get("_general_table_draft_version", 0) + 1)
+
+        st.button("Draft with LLM", on_click=_run_llm_draft)
+        _draft_error = st.session_state.get("_general_table_draft_error")
+        if _draft_error is not None:
+            _friendly_error(_draft_error)
+        _shown_draft = st.session_state.get("_general_table_draft")
+        if _shown_draft is not None and (_shown_draft.unconfident_pairs
+                                          or _shown_draft.is_viable_d_final_unconfident):
+            st.warning("The last draft wasn't confident about some pruning checks -- each one "
+                       "was overridden to `TRUE` below (never pruned); original attempts, "
+                       "unvetted, for you to review:")
+            if _shown_draft.is_viable_d_final_unconfident:
+                st.code(f"is_viable_d_final(D): {_shown_draft.raw_is_viable_d_final}", language="sql")
+            for _unconfident_pair in sorted(_shown_draft.unconfident_pairs):
+                st.code(f"is_viable_d for {_unconfident_pair}: "
+                        f"{_shown_draft.raw_is_viable_d[_unconfident_pair]}", language="sql")
 
     if len(_pairs) > 50:
         st.warning(f"This automaton has {len(_pairs)} transition pairs -- editing all of "
@@ -414,16 +517,27 @@ if structure_mode == "General":
                "total). Unedited rows default to `D` (unchanged) / `TRUE` (always viable) "
                "-- edit only the rows that need real logic. `labels` is shown for context "
                "and isn't itself editable.")
+    _table_draft = st.session_state.get("_general_table_draft")
     _default_table = pd.DataFrame([
         {"from_state": frm, "to_state": to,
          "labels": ", ".join(sorted(_labels_by_pair[(frm, to)])),
-         "update_d": "D", "is_viable_d": "TRUE"}
+         "update_d": (_table_draft.update_d.get((frm, to), "D") if _table_draft else "D"),
+         "is_viable_d": (_table_draft.is_viable_d.get((frm, to), "TRUE") if _table_draft else "TRUE")}
         for frm, to in _pairs
     ])
-    _table_key = f"general_table::{regex if use_regex else '(no regex)'}"
+    _table_key = (f"general_table::{regex if use_regex else '(no regex)'}::"
+                  f"minimize={st.session_state.get('minimize_automaton', False)}::"
+                  f"draft={st.session_state.get('_general_table_draft_version', 0)}")
     _edited_table = st.data_editor(
         _default_table, key=_table_key, hide_index=True, width="stretch",
-        num_rows="fixed", disabled=["from_state", "to_state", "labels"])
+        num_rows="fixed", disabled=["from_state", "to_state", "labels"],
+        column_config={
+            "from_state": st.column_config.NumberColumn(width="small"),
+            "to_state": st.column_config.NumberColumn(width="small"),
+            "labels": st.column_config.TextColumn(width="small"),
+            "update_d": st.column_config.TextColumn(width="large"),
+            "is_viable_d": st.column_config.TextColumn(width="large"),
+        })
 
     custom_update_d_dict: dict[tuple[int, int], str] = {}
     custom_is_viable_d_dict: dict[tuple[int, int], str] = {}
@@ -691,7 +805,12 @@ breakdown = TimingBreakdown()
 try:
     if use_regex:
         with timed_stage(breakdown, "B: regex -> NFA"):
-            nfa = compile_regex_to_nfa(regex)
+            # Reads "Minimize the automaton first" (Section 3, General mode
+            # only) via session_state rather than the `minimize_automaton`
+            # local above -- this block is a deliberately independent,
+            # freshly-timed recomputation (see comment below), not a reuse
+            # of the live preview's own variables.
+            nfa = compile_regex_to_nfa(regex, minimize=st.session_state.get("minimize_automaton", False))
         with timed_stage(breakdown, "C: build transitions relation"):
             relation = build_transitions_relation(nfa)  # deterministic (NFR-1) -- same content as above
         with timed_stage(breakdown, "C: ambiguity guard"):

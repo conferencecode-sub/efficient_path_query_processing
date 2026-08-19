@@ -70,6 +70,194 @@ result (a real, honestly-reported finding: it *shrinks* the reported
 speedup, since General mode's own per-hop dispatch overhead exceeds its
 candidate-set reduction for this query).
 
+## Completed: Module J reintroduced, per explicit user request -- hosted-API backend, full per-pair draft scope (2026-08-18)
+
+Module J (LLM-assisted selective-aggregate authoring) was built,
+live-tested, then removed entirely on 2026-08-11 (see that entry below) --
+this reintroduces it with two deliberate, explicit user decisions that
+change its shape from the first version:
+
+- **Backend: a hosted Claude API model, not local Ollama.** The first
+  version's dominant, live-tested finding was that this machine's old
+  Tesla M10 hardware -- not model choice -- was the bottleneck (40s-8min
+  per draft). A hosted model removes that bottleneck entirely, at the cost
+  of a network dependency, `ANTHROPIC_API_KEY`, and a per-call charge.
+  `anthropic` added as a new `llm` optional-dependency group.
+- **Scope: a full per-transition-pair draft, not one factorized body.**
+  General mode's own table already has one `update_d`/`is_viable_d` row
+  per `(from_state, to_state)` pair -- this version drafts the whole
+  table at once (seeing every pair and its labels), rather than one body
+  applied uniformly regardless of state.
+
+`src/recap_compiler/llm_proposer.py` (new): `propose_general_aggregate()`
+builds a prompt (function specs, the same Q_B guiding example already
+shown in the UI, the automaton's own transition pairs + labels, the edge
+columns available, and the user's plain-English constraint), calls the
+model with `tool_choice` forcing a structured JSON draft (no free-text
+parsing needed), and validates the shape. A hallucinated pair (not one of
+the real transition pairs) is silently dropped, same benign-default
+philosophy as an unedited table row -- not an error.
+
+**Fail-safe kept from the first version, same reasoning, adapted to the
+per-pair scope:** `is_viable_d`/`is_viable_d_final` are pruning checks --
+an unsound one silently undercounts real results with no visible symptom.
+Each per-pair `is_viable_d` and the overall `is_viable_d_final` carries its
+own model-reported confidence; whenever unconfident, that one item is
+overridden to `TRUE` (never pruned) while the model's original, unvetted
+attempt is kept (`raw_is_viable_d`/`raw_is_viable_d_final`) for the UI to
+show clearly flagged, so the user can manually promote it if they judge it
+sound. `update_d`/`init_d`/`finalize_d` carry no such fail-safe -- a wrong
+one just computes the wrong value, the same risk class as any
+hand-written mistake, caught by review/testing rather than a
+confidence gate.
+
+**Same non-privileged-path guarantee as before:** the drafted values land
+in the exact same `custom_init_d`/table cells/`custom_is_viable_d_final`/
+`custom_finalize_d` widgets a human would type into, then go through the
+identical FR-14/FR-23 validation and FR-22 optimizer-equivalence checks
+before Compile & run -- no separate code path for LLM output.
+
+**A real Streamlit issue found and fixed while wiring up the UI:** writing
+to `st.session_state["custom_init_d"]` inline inside `if st.button(...):`
+raised `StreamlitAPIException` ("cannot be modified after the widget ...
+is instantiated") -- `custom_init_d`'s own `st.text_area` is declared
+*earlier* in the script than the button, so by the time the button's body
+runs (same script pass), that widget has already rendered. Fixed by moving
+the whole draft-and-populate logic into a function passed as the button's
+own `on_click=` callback -- callbacks run *before* the next top-to-bottom
+script pass (which re-instantiates every widget from scratch), so writing
+to a not-yet-rendered widget's session_state there is exactly the
+legal/intended use of the pattern.
+
+Tests: `tests/test_llm_proposer.py` (9 cases) -- a small fake client
+(`.messages.create(...)` returning a canned tool-use response) covers
+confident drafts used verbatim, unconfident items overridden with the raw
+attempt preserved, hallucinated pairs dropped, missing-field/no-tool-call
+parse errors, SDK-call failures, and a missing API key -- no real network
+call or API key needed for any of them. Verified live via
+`streamlit.testing.v1.AppTest` with the same fake-client-injection
+approach: the panel renders with no exceptions; a missing API key and an
+empty constraint description both surface as a friendly `st.error`, not a
+crash; a successful draft populates every widget/table cell correctly
+(confirmed against the *real* current automaton's own transition pairs,
+read back from the rendered table before drafting) and the
+unconfident-pair warning box renders with the flagged raw attempt.
+161 tests total.
+
+## Completed, then superseded the same day: Stage F's non-factorized `update_d` briefly compiled to one combined `CASE`, not one per key (2026-08-18)
+
+**Superseded by the entry above** ("reverted to one flat `CASE` per key,
+plus a real uniform-body-collapse optimization") -- the combined shape
+described below measured ~1.4-1.65x slower on Q1's real aggregate and was
+reverted the same day. Kept here for the historical record (the
+verification steps below were real and still happened), not because the
+shape it describes is current.
+
+Per explicit user request: `optimizer.py`'s non-factorized `_flatten_update_d`
+used to build one `CASE` per dictionary key, each repeating the same
+`from_state`/`to_state` conditions -- correct, but redundant, and a
+different shape than `_flatten_is_viable_d`'s own single combined `CASE`.
+Replaced with `_flatten_update_d_combined`: one `CASE` over transition
+pairs, each branch a single struct literal covering every key at once
+(mirrors `is_viable_d`'s own shape, and the user's own `is_viable_d`
+comparison point). `build_optimized_query` now branches on
+`aggregate.factorized` when building the recursive term: factorized keeps
+the existing flat per-key columns (nothing to combine -- the body doesn't
+vary per pair); non-factorized wraps the combined `CASE` in a subquery
+aliased `__updated` and destructures it back into individual columns
+(`__updated.<key> AS <key>`) in the outer `SELECT`, so `paths`' column list
+still lines up with the base case. Confirmed sound inside a real
+`WITH RECURSIVE` CTE via a standalone DuckDB test first (the same
+DECIMAL-vs-DOUBLE literal-inference pitfall already known from the
+navigation experiments below applies to base-case literals here too, but
+only to ad hoc test SQL -- `typed_init_d` already casts real compiler
+output correctly).
+
+New regression test (`test_non_factorized_update_d_uses_one_combined_case_not_one_per_key`)
+locks in the SQL shape directly (`.count("CASE") == 2`: one for `update_d`,
+one for `is_viable_d`). All pre-existing non-factorized equivalence tests
+(multi-key, partial-struct, bare-`D` pass-through) already exercise this
+path end-to-end against real DuckDB execution and kept passing unchanged --
+152 tests total. Also verified live via `streamlit.testing.v1.AppTest`:
+General mode, real dataset (78,600 edges), Stage F's optimized query
+(confirmed via its actual rendered SQL to use the new combined-`CASE`
+shape) returns 31,179 paths, exactly matching Stage E's standard query.
+
+The regex input lived in its own "Section 2. Label regex," separate from
+the aggregate-authoring section -- an artificial split, since a ReCAP
+(Definition 8) formally *is* the pair (automaton, selective aggregate).
+Sections renumbered: 1. Graph data (unchanged, sidebar), **2. Start
+vertices and length bound** (moved up -- it only ever depended on the
+graph, not the regex), **3. ReCAP** (regex input, now a `st.subheader`,
+directly followed by "Selective aggregate" and the Factorized/General
+radio, all one section).
+
+**Real simplification, not just relabeling:** removed one of the two
+`st.session_state.get("minimize_automaton", ...)` reads added earlier the
+same day. The initial regex-validation build (right after the regex text
+box) no longer tries to guess the not-yet-declared checkbox's value --
+it's hardcoded to `minimize=False` (its only job is catching a bad regex
+and running the ambiguity guard, independent of what the user later
+decides for the table). General mode's own checkbox now rebuilds its
+table-scoped relation directly as a local variable, in its natural
+top-to-bottom position, no session_state needed there anymore. The
+*other* session_state read (inside the separately-timed "Compile & run"
+block further down) stays -- that one was never about section layout, it
+exists because that block is a deliberate, independent recomputation for
+accurate per-stage timing, comment updated to say so plainly.
+
+Verified via `streamlit.testing.v1.AppTest`: app loads with sections in
+the new order, General mode's checkbox still drops the table from 62 to
+4 rows for a random per-run regex example, and Compile & run still gets
+a real FR-22 PASS (33,921 paths). 151 tests unchanged/passing.
+
+## Completed: General mode gets a "minimize first" checkbox and a guiding example (2026-08-18)
+
+Three small, explicitly-requested additions to Section 4's General mode
+(on top of the same-day Factorized/General restructuring below):
+
+**"Minimize the automaton first" checkbox.** Ties directly to the
+same-day ambiguity-check work: checking it recompiles the regex with
+`minimize=True` instead of the default `minimize=False`, so the
+per-transition-pair table shows far fewer rows (confirmed live via
+`AppTest`: the bundled dataset's default regex/label column goes from 35
+transition pairs down to 4 once checked) and can never be ambiguous.
+**Real wiring subtlety, caught before assuming it was simple:** the app
+computes the transitions relation *twice* -- once for the live Section 2
+preview (and hence the Section 4 table), once more, independently, inside
+the timed "Compile & run" block (a deliberate pre-existing design so
+per-stage timing reflects a fresh run, not reused work) -- so the
+checkbox's effect had to reach *both* computations consistently, not just
+the table's own preview, or the table's `from_state`/`to_state` numbering
+would silently stop matching what actually executes. Solved by reading
+`st.session_state.get("minimize_automaton", False)` at both call sites
+(valid even where the first one runs *before* the checkbox's own
+`st.checkbox(...)` line later in the script, since Streamlit commits a
+widget's session_state update before a rerun starts, not when the script
+reaches that widget) rather than threading a new parameter through.
+`_table_key` also now includes the minimize flag, so toggling it resets
+the table (correct -- the old rows would otherwise refer to states that
+no longer exist under the new numbering).
+
+**Table-editing already worked as expected** -- confirmed, no code
+change needed (the user was checking their own understanding).
+
+**"Example: filling in this table" expander**, using $Q_B$ from
+`new_compiler_requirements/compiler_reqs.md` Section 10 -- the paper's
+own Figure 5 worked instantiation (`Domestic+ Foreign`, `T =
+{(1,2,Domestic), (2,2,Domestic), (2,3,Foreign)}`), since that's exactly
+the example this whole feature (FR-40) was modeled on. Shows the concrete
+3-row table (`update_d` identical on every row; `is_viable_d` differs by
+transition -- ±2 days while still inside the `Domestic+` run vs. ±3 days
+on the one hop into `Foreign`) as a static reference table, not wired to
+anything executable.
+
+Verified via `streamlit.testing.v1.AppTest`, actually toggling the new
+checkbox (not just checking the app loads): table row count dropped
+35→4, the guiding-example expander rendered its 3-row static table
+correctly, and a real Compile & run with the checkbox on still got an
+FR-22 PASS (8,851 paths). 151 tests unchanged/passing -- workbench-only.
+
 ## Completed: restructured Section 4 (renamed "ReCAP") around Factorized/General, per explicit user request (2026-08-18)
 
 Section 4 was "Selective aggregate": a "Use library aggregate(s)" checkbox
@@ -424,7 +612,7 @@ directly.
 | Section 7 | Error taxonomy (cross-cutting) | E-INPUT, E-REGEX now; E-REF/E-TYPE/E-UNSUPPORTED/E-EXEC land with D/F/G | **Scaffolded** | 2026-08-06 | `src/recap_compiler/errors.py` | exercised via A/B tests |
 | -- | Stage-by-stage timing breakdown (not a spec item -- diagnostic/demo tool) | n/a | **Done** | 2026-08-10 | `src/recap_compiler/profiling.py` | `tests/test_profiling.py` (6 cases) |
 | H (stretch) | Negative-stability verifier | FR-27..FR-31 (Section 13, not committed) | Not started | -- | -- | -- |
-| J (optional) | LLM-assisted selective-aggregate authoring | *(spec section removed)* | **Removed** (built, live-tested, then removed per explicit user decision) | built 2026-08-11, removed 2026-08-11 | -- | -- |
+| J (optional) | LLM-assisted selective-aggregate authoring | *(spec section removed)* | **Done** (reintroduced 2026-08-18: hosted Claude API backend, full per-transition-pair draft scope -- see notes) | built 2026-08-11, removed 2026-08-11, reintroduced 2026-08-18 | `src/recap_compiler/llm_proposer.py` | `tests/test_llm_proposer.py` (9 cases) |
 
 ## Module J -- built, live-tested, then removed (2026-08-11)
 

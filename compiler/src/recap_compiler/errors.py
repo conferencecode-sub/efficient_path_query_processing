@@ -55,3 +55,18 @@ class ExecutionError(RecapCompilerError):
     """E-EXEC: DuckDB runtime error; length bound causes resource exhaustion."""
 
     category = "E-EXEC"
+
+
+class ProposerUnavailableError(RecapCompilerError):
+    """E-PROPOSER-UNAVAILABLE: Module J's LLM proposer can't be reached --
+    missing API key, missing SDK, or the call itself failed."""
+
+    category = "E-PROPOSER-UNAVAILABLE"
+
+
+class ProposerParseError(RecapCompilerError):
+    """E-PROPOSER-PARSE: Module J's LLM proposer returned a response that
+    doesn't match the expected shape (missing field, didn't call the tool,
+    empty constraint description)."""
+
+    category = "E-PROPOSER-PARSE"

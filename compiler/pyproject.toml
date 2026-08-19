@@ -17,6 +17,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest"]
 ui = ["streamlit"]
+llm = ["anthropic"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
