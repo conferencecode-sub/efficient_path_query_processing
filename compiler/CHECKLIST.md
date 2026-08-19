@@ -29,6 +29,47 @@ but needs E working as its correctness baseline (NFR-2 compares standard vs.
 optimized output), so it comes after E/G. I (the workbench UI) comes last --
 it's glue over an already-working pipeline.
 
+## Completed: Stage F's non-factorized `update_d` reverted to one flat `CASE` per key, plus a real uniform-body-collapse optimization -- measured, not assumed (2026-08-18)
+
+Earlier the same day, non-factorized `update_d` was changed to build one
+combined struct-valued `CASE` per transition pair (mirroring
+`is_viable_d`'s own shape). A real experiment
+(`experiments/q1_length_sweep/run_general_vs_factorized.py`, Q1's real
+aggregate re-authored non-factorized to test whether pushing a
+state-gated check earlier closes the gap `subsec:e5_handcrafted` in the
+paper describes) found this combined shape measured ~1.4-1.65x *slower*
+than the equivalent factorized query -- the struct-construction/subquery-
+destructuring cost is paid on every hop, while the benefit (pruning
+earlier at one transition) only fires once. Reverted `_flatten_update_d`'s
+non-factorized branch back to one flat `CASE` per key (no struct, no
+subquery) -- but reverting alone didn't close the gap either (still
+~1.2-1.85x slower), so the struct/flat shape choice wasn't actually the
+bottleneck.
+
+**Real, additional optimization found and kept:** per-key `CASE`s are
+built per transition pair regardless of whether the pair's own body
+actually differs -- for Q1's real aggregate, every dictionary key's
+`update_d` body turned out to be identical across all four transition
+pairs (matching its hand-written source, `ReCAP/q1/recap_gen_recap_
+inline.py`, which never bothers to branch `update_d` by state either).
+`_flatten_update_d` now detects when every pair's inlined body for a key
+is byte-identical and collapses that key to a flat expression -- no
+`CASE` at all -- instead of mechanically building one it can never
+actually take more than one branch of. Two new regression tests
+(`test_non_factorized_update_d_uses_one_flat_case_per_key_not_a_combined_
+struct_case`, `test_uniform_update_d_body_collapses_to_a_flat_expression_
+no_case`), the latter checked against real DuckDB execution (FR-22), not
+just a shape assertion. 162 tests pass.
+
+Separately used this same infra to test switching `tab:e4_isolation`'s
+"early property filtering" configuration from factorized to General mode,
+per explicit user request (isolating the *maximum* achievable early-
+filtering benefit, not just what the current factorized generator
+happens to do) -- see `figures.tex`'s own updated caption/prose for that
+result (a real, honestly-reported finding: it *shrinks* the reported
+speedup, since General mode's own per-hop dispatch overhead exceeds its
+candidate-set reduction for this query).
+
 ## Completed: restructured Section 4 (renamed "ReCAP") around Factorized/General, per explicit user request (2026-08-18)
 
 Section 4 was "Selective aggregate": a "Use library aggregate(s)" checkbox

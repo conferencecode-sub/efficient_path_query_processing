@@ -1,0 +1,14 @@
+{"query": "q4", "length": 2, "variant": "standard", "result": 422, "runtime_ms": 65.35124778747559, "baseline_rss_mb": 4122.689536, "peak_rss_mb": 4133.810176, "query_only_rss_mb": 11.120640000000094}
+{"query": "q4", "length": 2, "variant": "optimized", "result": 422, "runtime_ms": 43.08485984802246, "baseline_rss_mb": 4144.779264, "peak_rss_mb": 4146.876416, "query_only_rss_mb": 2.0971520000002783}
+{"query": "q4", "length": 3, "variant": "standard", "result": 4621, "runtime_ms": 124.8563677072525, "baseline_rss_mb": 4120.784896, "peak_rss_mb": 4127.113216, "query_only_rss_mb": 6.328319999999621}
+{"query": "q4", "length": 3, "variant": "optimized", "result": 4621, "runtime_ms": 48.6421138048172, "baseline_rss_mb": 3870.47424, "peak_rss_mb": 3872.571392, "query_only_rss_mb": 2.0971519999998236}
+{"query": "q4", "length": 4, "variant": "standard", "result": 38444, "runtime_ms": 82.08638429641724, "baseline_rss_mb": 4121.325568, "peak_rss_mb": 4123.42272, "query_only_rss_mb": 2.097151999999369}
+{"query": "q4", "length": 4, "variant": "optimized", "result": 38444, "runtime_ms": 97.1069186925888, "baseline_rss_mb": 4110.053376, "peak_rss_mb": 4120.90368, "query_only_rss_mb": 10.850304000000506}
+{"query": "q4", "length": 5, "variant": "standard", "result": 279035, "runtime_ms": 177.5006353855133, "baseline_rss_mb": 4022.718464, "peak_rss_mb": 4024.819712, "query_only_rss_mb": 2.1012479999999414}
+{"query": "q4", "length": 5, "variant": "optimized", "result": 279035, "runtime_ms": 162.91050612926483, "baseline_rss_mb": 4113.690624, "peak_rss_mb": 4115.787776, "query_only_rss_mb": 2.0971520000002783}
+{"query": "q4", "length": 6, "variant": "standard", "result": 1818120, "runtime_ms": 527.2925049066544, "baseline_rss_mb": 4043.73504, "peak_rss_mb": 4058.632192, "query_only_rss_mb": 14.897152000000006}
+{"query": "q4", "length": 6, "variant": "optimized", "result": 1818120, "runtime_ms": 450.4317194223404, "baseline_rss_mb": 4104.265728, "peak_rss_mb": 4108.386304, "query_only_rss_mb": 4.120575999999346}
+{"query": "q4", "length": 7, "variant": "standard", "result": 10704627, "runtime_ms": 2297.9563623666763, "baseline_rss_mb": 4225.982464, "peak_rss_mb": 4225.98656, "query_only_rss_mb": 0.0040960000005725306}
+{"query": "q4", "length": 7, "variant": "optimized", "result": 10704627, "runtime_ms": 2127.1592676639557, "baseline_rss_mb": 4060.450816, "peak_rss_mb": 4219.8016, "query_only_rss_mb": 159.35078399999975}
+{"query": "q4", "length": 8, "variant": "standard", "result": 57615956, "runtime_ms": 13091.448336839676, "baseline_rss_mb": 4179.226624, "peak_rss_mb": 11035.553792, "query_only_rss_mb": 6856.327168000001}
+{"query": "q4", "length": 8, "variant": "optimized", "result": 57615956, "runtime_ms": 12616.632178425789, "baseline_rss_mb": 4062.486528, "peak_rss_mb": 11053.85472, "query_only_rss_mb": 6991.368192}

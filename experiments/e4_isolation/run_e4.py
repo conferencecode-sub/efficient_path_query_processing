@@ -10,11 +10,19 @@ vertex (383, high-degree, matching every other Q1 experiment) as E1/E5:
 2. **regex + late property check** (`q1_late_property_aggregate.py`) -- same
    state tracking as ReCAP's own aggregate, but every property constraint
    deferred to `is_viable_d_final` instead of pruning per-hop.
-3. **regex + early property filtering** -- full ReCAP, i.e. the *existing*
-   `q1_aggregate.py` from `q1_length_sweep/` (identical to the E1 rerun's
-   `recap-new-optimized`, rerun here rather than reused so all three
-   configs report `intermediate_paths` uniformly -- E1's own CSV didn't
-   capture that field).
+3. **regex + early property filtering** -- General/non-factorized ReCAP
+   (`q1_aggregate_general.py` from `q1_length_sweep/`), *not* the factorized
+   `q1_aggregate.py` used elsewhere in the paper (E1/`tab:recap_real_data`,
+   `fig:performance_grid`): factorized mode has no NFA-state access, so it
+   can't express "check the risk-gateway only at the state 1->2 transition"
+   and has to defer that check to `is_viable_d_final` -- General mode can,
+   and does, push it to exactly that transition instead. Per explicit user
+   request: since this section's whole point is isolating the *maximum*
+   early-filtering benefit, it should use the encoding that actually
+   achieves maximal early filtering, not the one the rest of the paper
+   happens to use for other reasons (FR-12 factorized aggregates combine
+   additively across a query; General mode is always exactly one
+   aggregate, so it isn't used as the default elsewhere).
 
 All three built via `build_optimized_query` (Stage F) only -- the
 standard-vs-optimized axis is a separate, already-answered question (E1),
@@ -46,7 +54,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "q1_length_sweep"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "SOA-GDBMS"))
 
-from q1_aggregate import q1_aggregate  # noqa: E402
+from q1_aggregate_general import q1_aggregate_general  # noqa: E402
 from q1_late_property_aggregate import q1_late_property_aggregate  # noqa: E402
 from q1_regex_only_aggregate import q1_regex_only_aggregate  # noqa: E402
 
@@ -70,7 +78,7 @@ LENGTHS = (2, 3, 4)  # configs 1/2 (no early property pruning) grow ~50x per hop
 CONFIGS = {
     "1-regex-only": q1_regex_only_aggregate,
     "2-regex-late-property": q1_late_property_aggregate,
-    "3-regex-early-property": q1_aggregate,
+    "3-regex-early-property": q1_aggregate_general,
 }
 CSV_PATH = os.path.join(os.path.dirname(__file__), "results", "e4_isolation.csv")
 

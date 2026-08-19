@@ -257,6 +257,54 @@ def test_partial_update_d_struct_non_factorized_per_pair():
     assert d_by_vertex[3]["last_amount"] == 10.0  # (1,1) doesn't touch last_amount -- carried from hop 1
 
 
+def test_non_factorized_update_d_uses_one_flat_case_per_key_not_a_combined_struct_case():
+    """Locks in the requested shape: one flat `CASE` per dictionary key for
+    `update_d` (no struct literal, no subquery/destructuring) -- a
+    combined struct-valued `CASE` was measured slower in practice
+    (`experiments/q1_length_sweep/run_general_vs_factorized.py`, ~1.4-1.65x
+    on Q1's real aggregate) and reverted; see optimizer.py's own docstring.
+    Genuinely different bodies per pair here (unlike
+    `test_uniform_update_d_body_collapses_to_a_flat_expression_no_case`), so
+    a real per-key `CASE` is actually needed, not collapsed away."""
+    conn = _conn_with_edges([(1, 1, 2, "purchase", 10.0), (2, 2, 3, "purchase", 999.0)])
+    aggregate = SelectiveAggregate(
+        dictionary_keys=(DictionaryKey("last_amount", "DOUBLE"), DictionaryKey("hop_count", "BIGINT")),
+        init_d="{last_amount: NULL, hop_count: 0}",
+        update_d={(0, 1): "{last_amount: e.amount, hop_count: D.hop_count + 1}",
+                  (1, 1): "{last_amount: e.amount * 2, hop_count: D.hop_count + 2}"},
+        is_viable_d={(0, 1): "TRUE", (1, 1): "TRUE"},
+        is_viable_d_final="TRUE", finalize_d="D", factorized=False,
+    )
+    optimized = build_optimized_query(aggregate=aggregate, relation=TWO_STATE_RELATION,
+                                       start_vertices=[1], length_bound=3)
+    assert optimized.sql.count("CASE") == 3  # one per key (2) + one for is_viable_d
+    assert "__updated" not in optimized.sql  # no struct/subquery destructuring anymore
+
+
+def test_uniform_update_d_body_collapses_to_a_flat_expression_no_case():
+    """When every transition pair updates a key identically (Q1's own real
+    aggregate does this for every key, matching its hand-written source),
+    dispatching on from_state/to_state for that key is pure waste -- paid
+    on every hop, for no behavioral difference. Collapses to the shared
+    expression directly, no CASE at all for that key."""
+    conn = _conn_with_edges([(1, 1, 2, "purchase", 10.0), (2, 2, 3, "purchase", 999.0)])
+    aggregate = SelectiveAggregate(
+        dictionary_keys=(DictionaryKey("last_amount", "DOUBLE"),),
+        init_d="{last_amount: NULL}",
+        update_d={(0, 1): "{last_amount: e.amount}", (1, 1): "{last_amount: e.amount}"},
+        is_viable_d={(0, 1): "TRUE", (1, 1): "TRUE"},
+        is_viable_d_final="TRUE", finalize_d="D", factorized=False,
+    )
+    standard, optimized = _both_queries(conn, aggregate, TWO_STATE_RELATION,
+                                         start_vertices=[1], length_bound=3)
+    standard_rows = {(v, q, path_length) for v, q, _d, path_length, _r
+                      in conn.execute(standard.sql).fetchall()}
+    optimized_rows = {(v, q, path_length) for v, q, _d, path_length, _r
+                       in conn.execute(optimized.sql).fetchall()}
+    assert standard_rows == optimized_rows  # FR-22, not just a shape check
+    assert optimized.sql.count("CASE") == 1  # only is_viable_d's -- update_d collapsed away
+
+
 def test_bare_D_update_d_factorized_no_longer_crashes_stage_f():
     # Regression: bare `D` ("nothing changes on this hop") is valid for
     # Stage E's macro-paste but used to make Stage F's flattener raise

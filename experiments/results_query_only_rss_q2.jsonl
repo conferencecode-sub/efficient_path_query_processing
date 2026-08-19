@@ -1,0 +1,8 @@
+{"query": "q2", "length": 2, "variant": "standard", "result": 34, "runtime_ms": 12.99944519996643, "baseline_rss_mb": 377.4464, "peak_rss_mb": 405.569536, "query_only_rss_mb": 28.123136000000045}
+{"query": "q2", "length": 2, "variant": "optimized", "result": 34, "runtime_ms": 9.819522500038147, "baseline_rss_mb": 386.674688, "peak_rss_mb": 398.290944, "query_only_rss_mb": 11.616256000000021}
+{"query": "q2", "length": 3, "variant": "standard", "result": 1666, "runtime_ms": 18.00219714641571, "baseline_rss_mb": 365.105152, "peak_rss_mb": 398.835712, "query_only_rss_mb": 33.730560000000025}
+{"query": "q2", "length": 3, "variant": "optimized", "result": 1666, "runtime_ms": 16.862109303474426, "baseline_rss_mb": 368.992256, "peak_rss_mb": 421.658624, "query_only_rss_mb": 52.66636799999998}
+{"query": "q2", "length": 4, "variant": "standard", "result": 52508, "runtime_ms": 50.37553608417511, "baseline_rss_mb": 380.796928, "peak_rss_mb": 502.43584, "query_only_rss_mb": 121.638912}
+{"query": "q2", "length": 4, "variant": "optimized", "result": 52508, "runtime_ms": 42.52082109451294, "baseline_rss_mb": 372.604928, "peak_rss_mb": 506.028032, "query_only_rss_mb": 133.42310400000002}
+{"query": "q2", "length": 5, "variant": "standard", "result": 2743095, "runtime_ms": 819.686233997345, "baseline_rss_mb": 383.942656, "peak_rss_mb": 1346.658304, "query_only_rss_mb": 962.7156480000001}
+{"query": "q2", "length": 5, "variant": "optimized", "result": 2743095, "runtime_ms": 727.8024554252625, "baseline_rss_mb": 362.479616, "peak_rss_mb": 1354.05568, "query_only_rss_mb": 991.5760639999999}

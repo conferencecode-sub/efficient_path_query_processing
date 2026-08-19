@@ -16,10 +16,29 @@ text, with no macro layer and no struct-typed `D` column internally:
   `from_state`/`to_state` become `p.q`/`t.to_state`; `e.<column>` is left
   alone. No macro call remains anywhere in the generated SQL.
 - **FR-21:** a factorized aggregate's bodies rewrite to plain expressions;
-  a non-factorized aggregate's per-`(from_state, to_state)` bodies rewrite
-  to a `CASE` (one per key for `update_d`, one combined boolean `CASE` for
-  `is_viable_d`) -- the same shape Stage E's macro body had, just spliced
-  inline instead of hidden behind a macro call.
+  a non-factorized aggregate's `is_viable_d` rewrites to a single combined
+  boolean `CASE` over transition pairs (matching Stage E's macro body
+  shape), but `update_d` rewrites to **one plain `CASE` per dictionary
+  key**, not one combined struct-valued `CASE` -- a deliberate performance
+  choice, not an oversight (see the note below).
+- **Measured, not assumed: a combined struct-valued `CASE` for `update_d`
+  is slower, not faster, than one flat `CASE` per key.** A 2026-08-18
+  same-day revert: this file briefly built one struct-valued `CASE` per
+  transition pair (mirroring `is_viable_d`'s own shape), wrapped in a
+  subquery and destructured back into columns. Real experiment
+  (`experiments/q1_length_sweep/run_general_vs_factorized.py`, Q1's real
+  aggregate re-authored non-factorized, same NFA/dataset/start vertex as
+  the factorized version, result counts confirmed identical at every
+  ℓ=2..10) found this combined shape ran ~1.4-1.65x *slower* than the
+  equivalent factorized query, even after moving a state-gated check
+  earlier (the exact "fixable" scenario `subsec:e5_handcrafted` in the
+  paper argues for) -- because the combined shape's own per-hop cost
+  (constructing a full multi-key struct inside a `CASE`, subquery-wrapped,
+  then destructured) is paid on *every* hop of the whole path, while the
+  benefit of state-aware early pruning only fires at the one transition
+  that needed it. One flat `CASE` per key avoids the struct/subquery
+  machinery entirely -- each key is just its own scalar column, same as
+  the factorized path, just with a `CASE` instead of one flat expression.
 - **FR-22 (semantics-preserving):** this is a correctness obligation, not
   just a performance option -- see `tests/test_optimizer.py`'s equivalence
   tests against Stage E's standard query on the same inputs.
@@ -119,7 +138,10 @@ def _flatten_update_d(aggregate: SelectiveAggregate, *, declared_keys: list[str]
     `KeyError`) and, if it was written as one or more `D.<key> = <expr>`
     assignments, into the equivalent struct literal `_decompose_struct`
     already knows how to handle. The same normalization Stage E applies
-    before pasting into a macro, so the two stages agree (FR-22)."""
+    before pasting into a macro, so the two stages agree (FR-22).
+
+    Non-factorized: one flat `CASE` per key (see this module's docstring
+    for why -- measured faster than one combined struct-valued `CASE`)."""
     if aggregate.factorized:
         normalized = normalize_update_d_body(aggregate.update_d, declared_keys=declared_keys)
         fields = _decompose_struct(normalized)
@@ -135,13 +157,24 @@ def _flatten_update_d(aggregate: SelectiveAggregate, *, declared_keys: list[str]
     }
     result: dict[str, str] = {}
     for key in declared_keys:
-        branch_lines = []
-        for frm, to in sorted(per_pair_fields):
-            inlined = _rewrite_node(per_pair_fields[(frm, to)][key], path_alias="p",
-                                     state_map=RECURSIVE_STATE_MAP,
-                                     declared_keys=declared_keys).sql(dialect="duckdb")
-            branch_lines.append(f"        WHEN t.from_state = {frm} AND t.to_state = {to} THEN ({inlined})")
-        result[key] = f"CASE\n" + "\n".join(branch_lines) + f"\n        ELSE p.{key}\n    END"
+        inlined_by_pair = {
+            pair: _rewrite_node(per_pair_fields[pair][key], path_alias="p",
+                                 state_map=RECURSIVE_STATE_MAP,
+                                 declared_keys=declared_keys).sql(dialect="duckdb")
+            for pair in per_pair_fields
+        }
+        distinct_bodies = set(inlined_by_pair.values())
+        if len(distinct_bodies) == 1:
+            # Every transition pair updates this key identically -- a real,
+            # measured win, not just a simplification: dispatching on
+            # from_state/to_state here is pure waste when nothing actually
+            # varies by state, and it's paid on every hop of every path, so
+            # it's worth detecting rather than always building the CASE.
+            result[key] = next(iter(distinct_bodies))
+        else:
+            branch_lines = [f"        WHEN t.from_state = {frm} AND t.to_state = {to} THEN ({inlined})"
+                             for (frm, to), inlined in sorted(inlined_by_pair.items())]
+            result[key] = "CASE\n" + "\n".join(branch_lines) + f"\n        ELSE p.{key}\n    END"
     return result
 
 
