@@ -32,3 +32,9 @@ experiments/datasets/
 # Reviewer PDF -- review/submission material, not code; moved to
 # ~/recap_paper_tex/ (same reasoning as *.tex above).
 info_background/new_reviews.pdf
+
+# Paper background material (paper PDF, pipeline diagrams, old prototype
+# requirements doc) -- not code, moved out of this artifact repo along with
+# the .tex source above.
+/info_background/
+/old_compiler_requirements/

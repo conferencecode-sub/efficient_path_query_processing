@@ -53,7 +53,7 @@ now appears only in the custom-aggregate authoring flow, directly beneath
 ## 2026-08-17 — FR-40 added and implemented: General (non-factorized) authoring in the workbench
 
 Source: the user's own idea, grounded in the paper's Figure 5 and a
-hand-drawn mockup (`info_background/gen_recap.png`) they provided. New
+hand-drawn mockup they provided. New
 **FR-40** (Section I): a Factorized/General authoring-mode choice for
 custom aggregates, General mode presenting `update_d`/`is_viable_d` as a
 per-`(from_state, to_state)` table (FR-12's own skeleton, as a table

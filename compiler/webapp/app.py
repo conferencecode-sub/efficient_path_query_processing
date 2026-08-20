@@ -1,9 +1,9 @@
-"""Stage I: workbench UI (FR-32, FR-33) -- MVP scope.
+"""Stage I: workbench UI -- MVP scope.
 
 A single-page Streamlit app wired directly to the existing A-G pipeline: no
-dataset, query, or aggregate is hard-coded (FR-33) -- the bundled sample
+dataset, query, or aggregate is hard-coded -- the bundled sample
 graph is only a default, replaceable via the file uploader. Drives the
-pipeline end to end (FR-32): load data -> optionally pick a label column and
+pipeline end to end: load data -> optionally pick a label column and
 enter a regex -> pick or author a selective aggregate -> compile -> run ->
 see the generated SQL, results, and telemetry. A regex is no longer
 mandatory: leaving the label-column picker on its no-regex option builds
@@ -24,15 +24,20 @@ is gated behind a plain `st.button`, since that's the only part slow
 enough (per the timing breakdown below) to be worth not re-running on
 every keystroke.
 
-Two ways to get a selective aggregate: pick one of the three FR-13 library
-entries with its parameters, or author a **factorized** custom one (own
-dictionary keys + five SQL bodies, validated live via FR-14). Non-
+Two ways to get a selective aggregate: pick one of the three built-in
+library entries with its parameters, or author a **factorized** custom one
+(own dictionary keys + five SQL bodies, validated live against the schema).
+Non-
 factorized (per-NFA-transition) authoring is deliberately out of scope --
 a real regex can have 100+ transition pairs (Q1's does), so a one-text-box-
 per-pair UI doesn't scale; see CHECKLIST.md. The negative-stability
 verifier (Section 13) is still unbuilt/deferred and has no UI hook. An
-LLM-assisted drafting panel (Module J) was built, live-tested, and removed
-(2026-08-11, per user decision) -- see CHECKLIST.md for that history.
+optional LLM-assisted drafting panel (Module J, "Draft with LLM" below) can
+propose a full per-transition-pair draft of the five functions from a
+hosted Claude API call, given the general (non-factorized) authoring mode
+and constraints in natural language -- requires an API key; see
+`llm_proposer.py` and CHECKLIST.md for its history (it was originally
+built, then removed, then reintroduced with a different design).
 
 Run with:
     cd compiler
@@ -72,8 +77,8 @@ from recap_compiler.standard_sql import (
 from recap_compiler.transitions import build_transitions_relation, guard_against_ambiguity, trivial_relation
 
 DEFAULT_DATASET = os.path.join(
-    os.path.dirname(__file__), "..", "..", "ReCAP", "simple_dataset", "LG.csv")
-MANY_START_VERTICES_CAP = 5  # keep the demo responsive; a degree band or the FR-4
+    os.path.dirname(__file__), "..", "sample_data", "LG.csv")
+MANY_START_VERTICES_CAP = 5  # keep the demo responsive; a degree band or the
                               # all-vertices default can return hundreds of vertices
 EDGE_PREVIEW_ROWS = 10
 
@@ -246,7 +251,7 @@ st.caption("Path query = an optional label regex + a selective aggregate over a 
 with st.sidebar:
     st.header("1. Graph data")
     uploaded = st.file_uploader("Edges CSV (required columns: src, dst)", type="csv")
-    dataset_label = uploaded.name if uploaded else "bundled sample: ReCAP/simple_dataset/LG.csv"
+    dataset_label = uploaded.name if uploaded else "bundled sample: sample_data/LG.csv"
     st.caption(f"Using: {dataset_label}")
 
     try:
@@ -267,8 +272,8 @@ start_mode = st.radio("Start vertices", ["Explicit vertex id(s)", "Out-degree ba
 if start_mode == "Explicit vertex id(s)":
     start_vertex_ids_text = st.text_input(
         "Start vertex id(s)", value="383",
-        help="One id, or several separated by `;` (e.g. `383;12;97`) (FR-37). Leave empty to "
-             "start from every distinct src vertex in the Edges table instead (FR-4's "
+        help="One id, or several separated by `;` (e.g. `383;12;97`). Leave empty to "
+             "start from every distinct src vertex in the Edges table instead (the "
              "all-vertices default).")
     degree_band = None
 else:
@@ -308,7 +313,7 @@ if use_regex:
     # switching to a different label column (a genuinely new key) gets a
     # fresh random example drawn from that column's own alphabet.
     regex = st.text_input("Label regex", value=default_regex, key=f"label_regex::{label_column}")
-    with st.expander("Regex syntax help (FR-36)"):
+    with st.expander("Regex syntax help"):
         st.markdown(
             "- `|` union -- `a|b` matches label `a` or label `b`\n"
             "- concatenation (write atoms next to each other) -- `ab` matches `a` then `b`\n"
@@ -356,10 +361,10 @@ structure_mode = st.radio(
     "Aggregate structure", ["Factorized", "General"], horizontal=True, key="structure_mode",
     help="**Factorized**: `update_d`/`is_viable_d` are each one expression, applied "
          "regardless of NFA state -- any number of pre-built and/or hand-written factorized "
-         "aggregates below combine into one query (FR-34). **General**: `update_d`/"
+         "aggregates below combine into one query. **General**: `update_d`/"
          "`is_viable_d` may each differ per `(from_state, to_state)` transition pair (Figure "
          "5's per-transition boxes), edited as a table -- a single aggregate on its own, since "
-         "combining (FR-34) requires every input to be factorized.")
+         "combining multiple aggregates requires every input to be factorized.")
 
 selected_library_aggregates: list[SelectiveAggregate] = []
 custom_aggregate: SelectiveAggregate | None = None
@@ -402,8 +407,8 @@ if structure_mode == "General":
 
     # update_d/is_viable_d may differ per (from_state, to_state) transition
     # pair, edited as one table instead of a per-pair text box each -- the
-    # scale problem that kept non-factorized authoring out of the workbench
-    # until FR-40. `relation` may be None (no regex picked in Section 2);
+    # scale problem that originally kept non-factorized authoring out of the
+    # workbench. `relation` may be None (no regex picked in Section 2);
     # fall back to the same trivial_relation() Stage A/G already use for a
     # regex-less query, so the table still has something to show (a single
     # (0,0) row).
@@ -563,13 +568,14 @@ if structure_mode == "General":
             except RecapCompilerError as exc:
                 st.caption(f"(preview unavailable until every row above is valid: {exc})")
 
-    with st.expander("Merge-function authoring box (FR-35, sketch only -- not run)"):
+    with st.expander("Merge-function authoring box (sketch only -- not run)"):
         st.caption(
-            "FR-35: sketch how two fragments *both running the `update_d` above* would "
-            "compose their dictionaries at a seam (e.g. for a split/wavefront-style plan, "
-            "R4.O2 -- see FR-7 and Section 12 non-goal 3). Authoring aid only: nothing here "
-            "is parsed, validated, or used by Compile & run below -- no split/merge execution "
-            "plan is generated from it in this revision.")
+            "Sketch how two fragments *both running the `update_d` above* would "
+            "compose their dictionaries at a seam (e.g. for a split/wavefront-style plan; "
+            "the compiler keeps the NFA non-deterministic specifically to stay compatible with "
+            "this kind of segment-based planning -- see Section 12 non-goal 3). Authoring aid "
+            "only: nothing here is parsed, validated, or used by Compile & run below -- no "
+            "split/merge execution plan is generated from it in this revision.")
         _merge_default_d = custom_init_d if dictionary_keys else "{last_time: NULL}"
         merge_d1 = st.text_area("D1", value=_merge_default_d, height=60, key="merge_d1",
                                  help="Sketch of the first fragment's dictionary -- same "
@@ -618,14 +624,14 @@ if structure_mode == "General":
 
 else:  # Factorized
     st.caption("Pick pre-built aggregate(s), author a custom factorized one, or both -- "
-               "everything picked/authored below combines into a single query (FR-34): the "
+               "everything picked/authored below combines into a single query: the "
                "union of dictionary keys and the conjunction of viability checks, so a path "
                "must satisfy all of them.")
 
-    use_library = st.checkbox("Use pre-built aggregate(s) (FR-13)", value=True, key="use_library")
+    use_library = st.checkbox("Use pre-built aggregate(s)", value=True, key="use_library")
     if use_library:
         aggregate_kinds = st.multiselect(
-            "Aggregate(s) -- pick more than one to combine them into one query (FR-34), "
+            "Aggregate(s) -- pick more than one to combine them into one query, "
             "e.g. bounded range + trail",
             ["Bounded range (max - min <= U)", "Adjacent-edge predicate", "Trail (no repeated edges)"],
             default=["Bounded range (max - min <= U)"], key="aggregate_kinds",
@@ -725,13 +731,15 @@ else:  # Factorized
                  "\n\n**Examples:** `{last_time: e.time}` (struct form); "
                  "`D.total_amount += e.amount` (assignment form with augmented assignment).")
 
-        with st.expander("Merge-function authoring box (FR-35, sketch only -- not run)"):
+        with st.expander("Merge-function authoring box (sketch only -- not run)"):
             st.caption(
-                "FR-35: sketch how two fragments *both running the `update_d` above* would "
-                "compose their dictionaries at a seam (e.g. for a split/wavefront-style plan, "
-                "R4.O2 -- see FR-7 and Section 12 non-goal 3). Authoring aid only: nothing "
-                "here is parsed, validated, or used by Compile & run below -- no split/merge "
-                "execution plan is generated from it in this revision.")
+                "Sketch how two fragments *both running the `update_d` above* would "
+                "compose their dictionaries at a seam (e.g. for a split/wavefront-style plan; "
+                "the compiler keeps the NFA non-deterministic specifically to stay compatible "
+                "with this kind of segment-based planning -- see Section 12 non-goal 3). "
+                "Authoring aid only: nothing here is parsed, validated, or used by Compile & "
+                "run below -- no split/merge execution plan is generated from it in this "
+                "revision.")
             _merge_default_d = custom_init_d if dictionary_keys else "{last_time: NULL}"
             merge_d1 = st.text_area("D1", value=_merge_default_d, height=60, key="merge_d1",
                                      help="Sketch of the first fragment's dictionary -- same "
@@ -788,7 +796,7 @@ else:  # Factorized
             )
 
 compare_to_standard = st.checkbox(
-    "Also run the unoptimized (Stage E) query, to check it agrees with the optimized one (FR-22)",
+    "Also run the unoptimized (Stage E) query, to check it agrees with the optimized one",
     value=True)
 
 run_clicked = st.button("Compile & run", type="primary")
@@ -812,7 +820,7 @@ try:
             # of the live preview's own variables.
             nfa = compile_regex_to_nfa(regex, minimize=st.session_state.get("minimize_automaton", False))
         with timed_stage(breakdown, "C: build transitions relation"):
-            relation = build_transitions_relation(nfa)  # deterministic (NFR-1) -- same content as above
+            relation = build_transitions_relation(nfa)  # deterministic construction -- same content as above
         with timed_stage(breakdown, "C: ambiguity guard"):
             nfa, relation, ambiguity_warning = guard_against_ambiguity(regex, nfa, relation)
         if ambiguity_warning:
@@ -837,7 +845,7 @@ try:
     elif len(all_aggregates) == 1:
         aggregate = all_aggregates[0]
     else:
-        # FR-34: more than one picked/authored above -> combine into one aggregate
+        # More than one picked/authored above -> combine into one aggregate
         # (library + library, library + custom, or custom + custom all go through here).
         aggregate = combine_library_aggregates(*all_aggregates)
 
@@ -864,7 +872,7 @@ try:
         if start_vertex_ids_text is not None:
             stripped_ids_text = start_vertex_ids_text.strip()
             if not stripped_ids_text:
-                starts = select_start_vertices(handle)  # FR-4 all-vertices default
+                starts = select_start_vertices(handle)  # all-vertices default
             else:
                 try:
                     explicit_ids = [int(piece.strip()) for piece in stripped_ids_text.split(";")
@@ -946,10 +954,10 @@ if compare_to_standard:
     st.divider()
     if _signature_set(optimized_result) == _signature_set(standard_result):
         speedup = standard_result.telemetry.runtime_ms / max(optimized_result.telemetry.runtime_ms, 1e-9)
-        st.success(f"FR-22 check PASSED: both queries found the exact same "
+        st.success(f"Equivalence check PASSED: both queries found the exact same "
                    f"{len(optimized_result.rows):,} paths. Speedup: {speedup:.2f}x.")
     else:
-        st.error("FR-22 check FAILED: standard and optimized queries disagree -- this "
+        st.error("Equivalence check FAILED: standard and optimized queries disagree -- this "
                  "would be a real compiler bug, please report it.")
 
 st.divider()

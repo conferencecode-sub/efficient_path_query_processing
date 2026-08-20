@@ -4,7 +4,7 @@ Not part of the requirements spec -- a diagnostic/demo convenience so a
 caller (the demo script, the workbench UI) can show where time actually
 goes: parsing the regex, loading the graph, validating the aggregate,
 generating SQL, executing it, and so on. Deliberately separate from
-`execution.Telemetry` (FR-26), which measures only the generated query's
+`execution.Telemetry`, which measures only the generated query's
 own execution -- `TimingBreakdown` is the wider picture around it, and a
 query's `Telemetry.runtime_ms` is typically folded in as one of its stages.
 """

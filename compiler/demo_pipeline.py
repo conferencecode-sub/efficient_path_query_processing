@@ -1,7 +1,8 @@
 """Runs the ReCAP compiler end to end (Stages A-G) on the sample dataset and
 prints every intermediate artifact plus the actual DuckDB results -- both
 the unoptimized (Stage E) and optimized (Stage F) queries, side by side, so
-you can see both that they agree (FR-22) and how much Stage F's flattening
+you can see both that they agree (Stage F is required to produce the same
+result set as Stage E for every query) and how much Stage F's flattening
 and inlining actually save. Also prints a stage-by-stage timing breakdown
 (parsing, loading, SQL generation, execution, ...) so you can see where the
 time actually goes, not just the end-to-end total.
@@ -25,7 +26,7 @@ from recap_compiler.selective_aggregate import bounded_range, validate_selective
 from recap_compiler.standard_sql import build_standard_query, materialize_transitions, register_aggregate_macros
 from recap_compiler.transitions import build_transitions_relation
 
-DATASET = os.path.join(os.path.dirname(__file__), "..", "ReCAP", "simple_dataset", "LG.csv")
+DATASET = os.path.join(os.path.dirname(__file__), "sample_data", "LG.csv")
 REGEX = "(transfer|purchase|sale)+(phishing|scam)+"  # the paper's Q1 query
 START_VERTEX = 383  # matches the fixed starter_node used throughout the earlier navigation experiments
 LENGTH_BOUND = 3    # max edges per path (path_length now starts at 0, so this is 1 less than it
@@ -65,11 +66,12 @@ def main() -> None:
 
     _section("Stage D: selective-aggregate frontend")
     aggregate = bounded_range(property="amount", upper_bound=500.0)
-    print("chosen library entry: FR-13(iii) bounded_range(property='amount', upper_bound=500.0)")
+    print("chosen library entry: bounded_range(property='amount', upper_bound=500.0)"
+          " -- a bounded monotone/distributive aggregate")
     print(f"  is_viable_d = {aggregate.is_viable_d}")
     with timed_stage(breakdown, "D: validate aggregate"):
         validate_selective_aggregate(aggregate, edge_columns=edge_columns)
-    print("  FR-14 validation: PASSED")
+    print("  reference validation (function bodies only touch declared columns/keys): PASSED")
 
     with timed_stage(breakdown, "E: register aggregate macros"):
         register_aggregate_macros(conn, aggregate)
@@ -96,7 +98,7 @@ def main() -> None:
 
     standard_signature = {(v, q, path_length) for v, q, _d, path_length, _r in standard_result.rows}
     optimized_signature = {(v, q, path_length) for v, q, _d, path_length, _r in optimized_result.rows}
-    assert standard_signature == optimized_signature, "FR-22 violated: results diverged!"
+    assert standard_signature == optimized_signature, "standard and optimized queries diverged!"
 
     print(f"standard  (Stage E, macros):  {len(standard_result.rows):>7} paths, "
           f"{standard_result.telemetry.runtime_ms:>7.1f} ms "
@@ -111,7 +113,7 @@ def main() -> None:
           # module docstring) -- this is the peak since then, not isolated.
           f"{optimized_result.telemetry.peak_buffer_memory_mb:.1f} MB peak buffer memory (cumulative)")
     speedup = standard_result.telemetry.runtime_ms / optimized_result.telemetry.runtime_ms
-    print(f"\nFR-22 check: PASSED (both queries found the exact same {len(standard_result.rows)} paths)")
+    print(f"\nequivalence check: PASSED (both queries found the exact same {len(standard_result.rows)} paths)")
     print(f"speedup: {speedup:.2f}x")
 
     print(f"\nsample optimized result row: {optimized_result.rows[0]}")

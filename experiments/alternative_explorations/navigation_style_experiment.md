@@ -249,10 +249,10 @@ results aren't blocked on it.
 ## 6. Open risk to flag before running this
 
 Same one already on record in memory from the requirements-doc review: no
-meta-review document was found in `info_background/` to corroborate the
-"meta-review's crux (3)" quote cited in `compiler_reqs.md`. Unrelated to this
-experiment's validity, but worth resolving before either document is used to
-justify scope to a co-author or the AE.
+meta-review document was found to corroborate the "meta-review's crux (3)"
+quote cited in `compiler_reqs.md`. Unrelated to this experiment's validity,
+but worth resolving before either document is used to justify scope to a
+co-author or the AE.
 
 ## 7. Extensions (2026-08-18): three more constraint families/regex shapes/orderings
 

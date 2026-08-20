@@ -1,8 +1,7 @@
 # ReCAP Compiler
 
 Implementation of the compiler specified in
-`../new_compiler_requirements/compiler_reqs.md` (that folder was
-`../requirements/` until 2026-08-07 -- update any old links):
+`../new_compiler_requirements/compiler_reqs.md`:
 regex + selective aggregate + property graph -> optimized recursive SQL,
 executed on DuckDB. See `CHECKLIST.md` for what's built so far, what's next,
 and implementation notes/gotchas for whoever picks this up.
@@ -136,7 +135,7 @@ from recap_compiler.optimizer import build_optimized_query
 from recap_compiler.execution import run_query
 
 conn = duckdb.connect()
-handle = load_graph(conn, "../ReCAP/simple_dataset/LG.csv")
+handle = load_graph(conn, "sample_data/LG.csv")
 nfa = compile_regex_to_nfa("(transfer|purchase|sale)+(phishing|scam)+")
 relation = build_transitions_relation(nfa)
 

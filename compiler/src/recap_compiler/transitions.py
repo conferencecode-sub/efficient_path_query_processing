@@ -1,4 +1,4 @@
-"""Stage C: NFA -> transitions relation (FR-9, FR-10).
+"""Stage C: NFA -> transitions relation.
 
 Renumbers the NFA's states to consecutive small integers and materializes
 `T(from_state, to_state, label)`. When the NFA (as produced by Stage B) has
@@ -49,7 +49,7 @@ def trivial_relation() -> TransitionsRelation:
 
 
 def build_transitions_relation(nfa: NFA) -> TransitionsRelation:
-    # Sorted by str(value) for a deterministic state numbering (NFR-1): two
+    # Sorted by str(value) for a deterministic state numbering: two
     # calls on the same NFA must produce the same T/q0/Q_F every time.
     ordered_states = sorted(nfa.states, key=lambda s: str(s.value))
     state_id = {state: i for i, state in enumerate(ordered_states)}
@@ -74,8 +74,8 @@ def build_transitions_relation(nfa: NFA) -> TransitionsRelation:
     # the generated SQL joins the edges table against this relation, so a
     # duplicate transition row makes the recursive CTE match the same real
     # edge multiple times, multiplying the final path count. `dict.fromkeys`
-    # dedupes while preserving first-occurrence order, keeping NFR-1's
-    # determinism (the input order is itself already deterministic).
+    # dedupes while preserving first-occurrence order, keeping the
+    # determinism above (the input order is itself already deterministic).
     rows = list(dict.fromkeys(rows))
 
     return TransitionsRelation(rows=tuple(rows), q0=q0, accepting_states=frozenset(accepting))
@@ -100,7 +100,7 @@ def is_ambiguous(relation: TransitionsRelation) -> tuple[bool, tuple[int, int] |
     sale))+` both report the same physical-path set either way but a
     higher count when ambiguous, while `minimize=True` (which always
     produces a DFA, hence always unambiguous) reports the deduplicated
-    count. FR-7's own `minimize=False` default already survives
+    count. The compiler's own `minimize=False` default already survives
     build_transitions_relation's q0-unioning dedup above for every regex
     checked in this project (including Q1's), so this is a residual risk
     for future/user-authored regexes, not a known-bad default.
@@ -157,7 +157,7 @@ def guard_against_ambiguity(
 ) -> tuple[NFA, TransitionsRelation, str | None]:
     """Auto-escalation for the one case `is_ambiguous` exists to catch:
     `nfa`/`relation` were compiled from `pattern` with `minimize=False`
-    (FR-7's required default) and turned out ambiguous, so this query's
+    (the compiler's required default) and turned out ambiguous, so this query's
     reported path *count* would silently overcount (one row per accepting
     run, not one per physical path -- see `is_ambiguous`'s own docstring).
     A minimized automaton is always a DFA, hence always unambiguous, so
@@ -206,5 +206,5 @@ def guard_against_ambiguity(
 
 def to_dataframe(relation: TransitionsRelation) -> pd.DataFrame:
     """Materializes T(from_state, to_state, label) as a DataFrame, ready to
-    register into DuckDB (FR-9)."""
+    register into DuckDB."""
     return pd.DataFrame(relation.rows, columns=["from_state", "to_state", "label"])

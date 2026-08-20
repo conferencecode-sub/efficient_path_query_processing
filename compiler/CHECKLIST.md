@@ -385,9 +385,9 @@ coverage of the exact function used at both call sites.
 Adds the workbench UI half of what the compiler already supported: a
 per-`(from_state, to_state)` transition table for `update_d`/`is_viable_d`,
 matching Figure 5's per-transition boxes and a hand-drawn mockup the user
-provided (`info_background/gen_recap.png`) -- read both directly (the PDF
-page rendered via `pymupdf`, since no PDF tool was installed) before
-designing this, rather than guessing from the filenames. LLM-assisted
+provided -- read both directly (the PDF page rendered via `pymupdf`, since
+no PDF tool was installed) before designing this, rather than guessing
+from the filenames. LLM-assisted
 prefilling (the mockup's "auto?" annotation, i.e. reviving Module J) is
 explicitly deferred to a future session at the user's request -- see the
 dated project memory for that plan and the "6 vs 5 functions" open

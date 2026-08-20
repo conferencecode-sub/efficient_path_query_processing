@@ -1,45 +1,50 @@
 # ReCAP Compiler
 
-Repo for the "ReCAP" paper ("Efficient Path Query Processing in Relational
-Database Systems") SIGMOD 2027 Round-2 revision. ReCAP compiles a path query
-(label regex + selective aggregate over edge/vertex properties) into
-optimized recursive SQL that early-filters "doomed" paths during exploration.
+Implementation of ReCAP ("Efficient Path Query Processing in Relational
+Database Systems"): a compiler that takes a path query -- a label regex plus
+a *selective aggregate* over edge/vertex properties -- and a property graph,
+and produces optimized recursive SQL that early-filters non-viable paths
+during exploration instead of generating every path first and filtering
+afterward. Runs on DuckDB.
 
-## Where things are
-
-- **`compiler/`** -- the compiler implementation, built against the spec
-  below. Start here: `compiler/README.md` (setup + layout) and
-  `compiler/CHECKLIST.md` (build progress, one row per pipeline stage).
-- **`new_compiler_requirements/compiler_reqs.md`** -- the functional
-  requirements spec the compiler is built against; each requirement traces
-  to the reviewer concern it answers (Section 11). (This folder was
-  `requirements/` until 2026-08-07.) Part I only -- an optional LLM-assisted
-  selective-aggregate authoring module (Part II, Module J) was designed,
-  built, and live-tested, then removed per explicit decision (2026-08-11);
-  see `compiler/CHECKLIST.md` for that history.
-- **`info_background/`** -- the paper (`Efficient_Path_Query_Processing_RelDBMS-2.pdf`)
-  and the Round-2 reviews + author feedback (`new_reviews.pdf`).
-- **`old_requirements/README.md`** -- the old prototype's README (browser UI +
-  Python/DuckDB backend). Documents what did/didn't work; superseded by
-  `compiler/`.
-- **`ReCAP/`** -- the old prototype's code (`q1`/`q2`/`q3` query scripts +
-  `simple_dataset`, the sample graph used throughout this repo). Has its own
-  nested git repo.
-- **`alternative_explorations/`** -- standalone experiments answering specific
-  reviewer critiques that don't belong in the compiler itself. Currently: a
-  fragment-splitting/navigation-style experiment for R4.O2 -- design in
-  `navigation_style_experiment.md`, runnable implementation in
-  `navigation_experiment/` (see its own README for how to run it).
-
-## Quick start: compiler
+## Quick start
 
 ```bash
 cd compiler
 pip install -e '.[dev]'
-python3 -m pytest tests/ -v
+python3 -m pytest tests/ -v          # 162 tests, all on the bundled sample dataset
+python3 demo_pipeline.py             # see it run end to end, no browser needed
 ```
 
-To see it running instead of just tests passing, either run
-`python3 demo_pipeline.py` (script), or `pip install -e '.[ui]' && streamlit
-run webapp/app.py` (browser UI). See `compiler/README.md` for both, and
-`compiler/CHECKLIST.md` for what's implemented so far vs. planned next.
+For the browser workbench instead of the script:
+
+```bash
+cd compiler
+pip install -e '.[ui]'
+streamlit run webapp/app.py
+```
+
+See `compiler/README.md` for what each of these actually does, and
+`compiler/CHECKLIST.md` for build status (one row per pipeline stage) and
+implementation notes for anyone extending this.
+
+## Where things are
+
+- **`compiler/`** -- the compiler itself, fully self-contained (bundles its
+  own small sample dataset in `compiler/sample_data/`, no external data
+  needed). Start here.
+- **`new_compiler_requirements/compiler_reqs.md`** -- the functional
+  requirements spec the compiler is built against.
+- **`ReCAP/`** -- an earlier prototype's code (`q1`/`q2`/`q3` query scripts)
+  and the real-graph datasets used by the larger reproduction pipeline under
+  `experiments/`. This is a separate git repository and is **not** required
+  for the compiler itself (see Quick start above) -- only for reproducing
+  the experiments in `experiments/`.
+- **`alternative_explorations/`** -- standalone experiments exploring
+  compatibility with segmented/non-forward path evaluation strategies;
+  design in `navigation_style_experiment.md`, runnable implementation in
+  `navigation_experiment/` (see its own README).
+- **`experiments/`** -- the full real-data evaluation campaign (multiple
+  datasets/engines, up to ~100M edges). Has its own per-experiment READMEs;
+  out of scope for this top-level README since it depends on large external
+  datasets not bundled here.

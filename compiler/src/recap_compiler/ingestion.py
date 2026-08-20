@@ -1,4 +1,4 @@
-"""Stage A: data ingestion (FR-1..FR-4).
+"""Stage A: data ingestion.
 
 Loads a graph's edges (and optional vertices) into DuckDB tables, from a CSV
 path or an already-registered DuckDB table name, and selects start vertices
@@ -71,8 +71,8 @@ def _load_relation(conn: duckdb.DuckDBPyConnection, source: str, table_name: str
 
 
 def _ensure_edge_id(conn: duckdb.DuckDBPyConnection, table_name: str = "edges") -> None:
-    """Not every edges source has its own unique id column, but FR-13(ii)'s
-    trail semantics (no repeated edge) need one to detect repeats. Adds a
+    """Not every edges source has its own unique id column, but trail
+    semantics (no repeated edge) need one to detect repeats. Adds a
     synthetic `edge_id` (row position, 0-based) if the loaded data doesn't
     already have one -- a no-op when it does, so a real id column is never
     overwritten."""
@@ -134,11 +134,11 @@ def load_graph(conn: duckdb.DuckDBPyConnection, edges_source: str,
                edge_type_overrides: dict[str, str] | None = None,
                vertex_type_overrides: dict[str, str] | None = None,
                label_column: str | None = None) -> GraphHandle:
-    """FR-1..FR-3: load edges (required src/dst + properties) and,
+    """Load edges (required src/dst + properties) and,
     optionally, vertices (required id + properties; inferred from edges when
     absent). `edges_source`/`vertices_source` may be a CSV path or the name
     of a table already registered on `conn`. Guarantees an `edge_id` column
-    exists on `edges` (FR-13(ii)'s trail semantics need one), synthesizing
+    exists on `edges` (trail semantics need one), synthesizing
     one from row position if the source didn't already have it.
 
     `label` is no longer a required column -- a graph with no notion of
@@ -168,11 +168,11 @@ def load_graph(conn: duckdb.DuckDBPyConnection, edges_source: str,
 def select_start_vertices(handle: GraphHandle, *, ids: list[int] | None = None,
                            predicate: str | None = None,
                            degree_band: str | None = None) -> list[int]:
-    """FR-4: select start vertices by an explicit id list, a SQL predicate
+    """Select start vertices by an explicit id list, a SQL predicate
     over vertex properties, or an out-degree quantile band (`'low'` <25%,
     `'medium'` 25-75%, `'high'` >75%). At most one of these may be given.
 
-    **Amended (FR-4, 2026-08-17):** if none is given, every distinct `src`
+    **Amended (2026-08-17):** if none is given, every distinct `src`
     value in the Edges table is used (the all-vertices default) -- not
     every vertex in `nodes`, since a vertex with no outgoing edges has no
     path to explore from and would just be a pointless start."""

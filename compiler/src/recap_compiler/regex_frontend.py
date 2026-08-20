@@ -1,4 +1,4 @@
-"""Stage B: regex frontend, Thompson's construction (FR-5..FR-8).
+"""Stage B: regex frontend, Thompson's construction.
 
 Compiles a label regex into an epsilon-free NFA. Thompson's-construction and
 epsilon-removal are delegated to pyformlang -- per the requirements doc's
@@ -10,7 +10,7 @@ Kleene star (`*`), parentheses, and `$`/`epsilon` -- *not* `+`, `?`, or
 bounded repetition (verified directly against its source and against
 `EpsilonNFA.accepts`, since `+`/`?` silently parse without error but don't
 apply the operator: `Regex("a+").to_epsilon_nfa().accepts(["a", "a"])` is
-False). FR-5 requires all six operators, so `+`, `?`, and `{m,n}` are
+False). The compiler supports all six regex operators, so `+`, `?`, and `{m,n}` are
 expanded here into pyformlang's native subset before parsing:
   atom+     -> (atom atom*)
   atom?     -> (atom|$)
@@ -71,8 +71,8 @@ def _extract_quoted_labels(pattern: str) -> tuple[str, dict[str, str]]:
 @dataclass(frozen=True)
 class NFA:
     """An epsilon-free NFA as pyformlang produces it. May have more than one
-    start state; Stage C (transitions.py) normalizes that to a single q0
-    (FR-9/FR-10), since the SQL template assumes exactly one."""
+    start state; Stage C (transitions.py) normalizes that to a single q0,
+    since the SQL template assumes exactly one."""
 
     states: frozenset
     start_states: frozenset
@@ -114,7 +114,7 @@ def _optional(atom: str) -> str:
 
 def _expand_postfix_operators(pattern: str) -> str:
     """Rewrites every `atom+`, `atom?`, and `atom{m}`/`atom{m,n}`/`atom{m,}`
-    into pyformlang-native concatenation/union/Kleene-star/epsilon (FR-5).
+    into pyformlang-native concatenation/union/Kleene-star/epsilon.
     Repeats until none remain, so chained operators (e.g. an optional group
     made of a bounded-repetition atom) expand correctly outside-in."""
     while True:
@@ -152,11 +152,11 @@ def _expand_postfix_operators(pattern: str) -> str:
 
 
 def compile_regex_to_nfa(pattern: str, *, minimize: bool = False) -> NFA:
-    """FR-5..FR-8: parse `pattern` over the edge-label alphabet, build an
+    """Parse `pattern` over the edge-label alphabet, build an
     epsilon-NFA via Thompson's construction, and eliminate epsilon
     transitions. Raises RegexError (E-REGEX) on a malformed pattern.
 
-    FR-7 is explicit that determinization/minimization "may be offered as
+    Determinization/minimization "may be offered as
     an optional pass but shall not be the default": non-determinism is
     handled natively by the recursive join, and *not* collapsing states is
     what keeps the NFA compatible with wavefront/segment-style planners
