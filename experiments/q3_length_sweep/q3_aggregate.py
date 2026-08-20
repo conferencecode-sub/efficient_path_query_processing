@@ -1,12 +1,12 @@
 """Q3's real selective aggregate ("monotonic trail"), combining two of
-Stage D's own FR-13 library entries into one aggregate -- there's no
+Stage D's own library entries into one aggregate -- there's no
 "combine two library aggregates" helper in `selective_aggregate.py`, so
 this composes their dictionary keys/bodies by hand, matching
 `ReCAP/q3/recap_monotonic_trail_inline.py`'s own hardcoded SQL (the source
 of truth for what Q3 actually checks):
 
-  - trail: no edge id reused -- FR-13(ii) `trail_via_edge_ids`'s own shape.
-  - strictly increasing edge weight -- FR-13(i) `adjacent_edge_predicate`'s
+  - trail: no edge id reused -- the library's `trail_via_edge_ids` own shape.
+  - strictly increasing edge weight -- the library's `adjacent_edge_predicate`
     own shape, with `comparator='>'` (strict) to match the old prototype's
     `e.weight > p.monotonicity_dictionary` exactly (not `>=`).
 

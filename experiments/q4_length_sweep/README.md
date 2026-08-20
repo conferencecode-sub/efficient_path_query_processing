@@ -20,11 +20,15 @@ nodes") -- and that canonical repo *does* have a real `q4/` with all three
 variants. The copy inside `ReCAP_Compiler` was apparently made before `q4/`
 was added upstream. Backfilled by copying `~/ReCAP/q4/*.py`
 into `ReCAP_Compiler/ReCAP/q4/` and applying the same bug-fixing pass as
-Q1-Q3 (see below) -- Q4 now has the full "same crew" comparison too.
+Q1-Q3 (see below) -- Q4 now has the full "same crew" comparison too. (That
+nested copy has since been relocated out of this repo entirely, to avoid
+duplicating the canonical `~/ReCAP` -- this section is historical record of
+how `q4/` was originally backfilled, not a currently-valid path.)
 
-`q4_aggregate.py` (the new-compiler side) is built directly from FR-13(iii)
-in `new_compiler_requirements/compiler_reqs.md` (`bounded_range`'s own
-worked example), combined by hand with FR-13(ii) `trail_via_edge_ids` --
+`q4_aggregate.py` (the new-compiler side) is built directly from the
+bounded-range library aggregate in `new_compiler_requirements/compiler_reqs.md`
+(`bounded_range`'s own worked example), combined by hand with the trail
+library aggregate's `trail_via_edge_ids` --
 same manual-composition pattern as `q3_aggregate.py`, since there's no
 "combine two library aggregates" helper in `selective_aggregate.py`. Its
 `MAX_MIN_BOUND = 20.0` was picked independently of the old prototype, then

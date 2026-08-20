@@ -1,9 +1,10 @@
 """Q4's selective aggregate ("max-min trail": a trail whose max and min
 edge weight stay within a bound). Unlike Q1-Q3, there's no `ReCAP/q4/`
 old-prototype to translate from -- this repo never had one (only
-`ReCAP/q1`/`q2`/`q3` exist) -- so this is built directly from FR-13(iii)'s
-own worked example (`bounded_range`), combined by hand with FR-13(ii)'s
-`trail_via_edge_ids`, same composition pattern as q3_aggregate.py.
+`ReCAP/q1`/`q2`/`q3` exist) -- so this is built directly from the
+bounded-range library aggregate's own worked example (`bounded_range`),
+combined by hand with the trail library aggregate's `trail_via_edge_ids`,
+same composition pattern as q3_aggregate.py.
 
 Bound picked to match `experiments/SOA-GDBMS/kuzu_run.py`'s own
 `Q4_MAX_MIN_BOUND = 20` (fixed 2026-08-13 from a stale timestamp-scale
@@ -56,10 +57,9 @@ def q4_default_aggregate(bound: float = MAX_MIN_BOUND) -> SelectiveAggregate:
     pruning, walk semantics during exploration, matching what a
     hand-written "\\DUCKDB\\ without \\ourabstraction" baseline would do.
     The trail-disjointness and max-min-bound checks both move to
-    `is_viable_d_final`, evaluated once over the complete `D`. Per FR-22
-    (and Observation 1/Section 4.3), this must return the exact same
-    result set as `q4_aggregate`'s early-filtered version -- only the
-    exploration cost differs."""
+    `is_viable_d_final`, evaluated once over the complete `D`. This must
+    return the exact same result set as `q4_aggregate`'s early-filtered
+    version -- only the exploration cost differs."""
     return SelectiveAggregate(
         dictionary_keys=(
             DictionaryKey("edge_ids", "BIGINT[]"),

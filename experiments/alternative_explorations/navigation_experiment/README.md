@@ -1,7 +1,7 @@
 # Navigation-style experiment: Phase 1 (regex + monotonic time only)
 
-Answers R4.O2 ("could the approach be split into segments / explored
-non-forward") for one concrete case: Q1 split at its rare-label seam
+Answers the design question of whether the approach could be split into
+segments / explored non-forward, for one concrete case: Q1 split at its rare-label seam
 (`(transfer|purchase|sale)+` -> `(phishing|scam)+`), merged back together, and
 checked against the ordinary left-to-right baseline. See
 `../navigation_style_experiment.md` for the full design and the stretch goal

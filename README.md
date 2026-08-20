@@ -35,15 +35,16 @@ implementation notes for anyone extending this.
   needed). Start here.
 - **`new_compiler_requirements/compiler_reqs.md`** -- the functional
   requirements spec the compiler is built against.
-- **`ReCAP/`** -- an earlier prototype's code (`q1`/`q2`/`q3` query scripts)
-  and the real-graph datasets used by the larger reproduction pipeline under
-  `experiments/`. This is a separate git repository and is **not** required
-  for the compiler itself (see Quick start above) -- only for reproducing
-  the experiments in `experiments/`.
-- **`alternative_explorations/`** -- standalone experiments exploring
-  compatibility with segmented/non-forward path evaluation strategies;
-  design in `navigation_style_experiment.md`, runnable implementation in
-  `navigation_experiment/` (see its own README).
+- **`~/ReCAP`** -- an earlier prototype's code (`q1`/`q2`/`q3`/`q4` query
+  scripts) and the real-graph datasets used by the larger reproduction
+  pipeline under `experiments/`. This is a separate, external sibling git
+  repository (not part of this repo, and not required for the compiler
+  itself -- see Quick start above) -- only needed for reproducing the
+  experiments in `experiments/`.
+- **`experiments/alternative_explorations/`** -- standalone experiments
+  exploring compatibility with segmented/non-forward path evaluation
+  strategies; design in `navigation_style_experiment.md`, runnable
+  implementation in `navigation_experiment/` (see its own README).
 - **`experiments/`** -- the full real-data evaluation campaign (multiple
   datasets/engines, up to ~100M edges). Has its own per-experiment READMEs;
   out of scope for this top-level README since it depends on large external

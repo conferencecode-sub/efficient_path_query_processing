@@ -3,7 +3,7 @@
 Three new experiments extending `../navigation_experiment/`'s Phase 1 pilot
 (monotonicity, isolated, on Q1's own regex -- already done there, not
 repeated here). See `../navigation_style_experiment.md` for the design
-context (R4.O2, the WAVEGUIDE-style split-and-possibly-reverse planner
+context (the WAVEGUIDE-style split-and-possibly-reverse planner
 comparison). Same dataset (`ReCAP/simple_dataset/LG.csv`/`LG_V.csv`, 1,320
 vertices / 78,600 edges, identical to `experiments/datasets/metaverse/`),
 same four start vertices spanning the out-degree distribution (383 max,
@@ -169,7 +169,7 @@ and F2's own cost (~220--260ms) is **entirely independent of which start
 vertex is queried**, since "F2 first" means computing the full unseeded
 middle segment regardless of where the query actually starts. This is the
 plainest illustration across all three new experiments of why "where best
-to start such segments" (R4.O2's own phrasing) is a real cost trade-off,
+to start such segments" is a real cost trade-off,
 not a free choice: precomputing a fragment before knowing the start vertex
 means paying its full cost even when the eventual start vertex only needed
 a tiny slice of it.

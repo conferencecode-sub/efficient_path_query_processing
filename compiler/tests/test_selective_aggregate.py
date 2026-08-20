@@ -25,7 +25,7 @@ QB_RELATION = TransitionsRelation(
 EDGE_COLUMNS = {"src", "dst", "label", "amount", "time", "id"}
 
 
-# --- FR-12: skeleton generation --------------------------------------------
+# --- Skeleton generation ----------------------------------------------------
 
 def test_factorized_skeleton_has_no_case_and_lists_pairs():
     skeleton = generate_skeleton(QB_RELATION, factorized=True)
@@ -46,7 +46,7 @@ def test_non_factorized_skeleton_has_one_branch_per_transition_pair():
     assert skeleton.update_d.rstrip().endswith("END")
 
 
-# --- FR-13: library entries -------------------------------------------------
+# --- Library entries ---------------------------------------------------------
 
 def test_adjacent_edge_predicate_library_entry_is_factorized_and_valid():
     agg = adjacent_edge_predicate(property="time")
@@ -71,7 +71,7 @@ def test_bounded_range_library_entry_matches_worked_maxmin_example():
     validate_selective_aggregate(agg, edge_columns=EDGE_COLUMNS)
 
 
-# --- FR-34: combining multiple library entries -------------------------------
+# --- Combining multiple library entries ---------------------------------------
 
 def test_combine_library_aggregates_unions_keys_and_is_still_valid():
     # The checklist's own example: max-min and trail together.
@@ -126,7 +126,7 @@ def test_combine_library_aggregates_supports_three_entries():
     validate_selective_aggregate(combined, edge_columns=EDGE_COLUMNS)
 
 
-# --- FR-14: reference validation --------------------------------------------
+# --- Reference validation ----------------------------------------------------
 
 def test_init_d_may_not_reference_anything():
     agg = SelectiveAggregate(

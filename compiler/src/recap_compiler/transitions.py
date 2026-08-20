@@ -172,7 +172,7 @@ def guard_against_ambiguity(
     Deliberately does **not** run when the caller already asked for
     `minimize=True` -- there is nothing to escalate to, and calling this
     on an NFA the caller compiled with `minimize=False` on purpose (e.g.
-    for wavefront/segment-planner compatibility, R4.O2) is the caller's
+    for wavefront/segment-planner compatibility) is the caller's
     call to make, not this function's."""
     ambiguous, witness = is_ambiguous(relation)
     if not ambiguous:

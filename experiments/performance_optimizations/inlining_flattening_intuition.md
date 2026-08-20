@@ -20,10 +20,10 @@ columns and inline expressions. Two independent rewrites, both done
 automatically by the compiler (`recap_compiler/optimizer.py`,
 `build_optimized_query`), not by hand, and not per-query:
 
-- **Dictionary flattening (FR-19):** each key of `D` becomes its own typed
+- **Dictionary flattening:** each key of `D` becomes its own typed
   column on the `paths` relation, instead of one field nested inside a
   struct.
-- **Function inlining (FR-20):** every `D.<key>` reference becomes a real
+- **Function inlining:** every `D.<key>` reference becomes a real
   column reference (`p.<key>`); every `e.<column>` is left alone (it was
   already a real column); there is no macro call left anywhere.
 
@@ -124,12 +124,12 @@ describing *exactly* this Stage F pass:
 
 - "Dictionary flattening removes one level of nesting from the selective
   aggregate's dictionary `D`... we add a column `K` directly to the Paths
-  relation" = `_decompose_struct` in `optimizer.py` (FR-19).
+  relation" = `_decompose_struct` in `optimizer.py`.
 - "Function inlining rewrites each UDF as SQL and substitutes its body at
   every call site... `isvalid` becomes a `CASE` over NFA states $q,q'$...
   for factorized ReCAPs, every `CASE` collapses to an unconditional
-  expression" = `_rewrite_node`/`_flatten_update_d`/`_flatten_is_viable_d`
-  (FR-20/FR-21), including the factorized-vs-non-factorized `CASE`
+  expression" = `_rewrite_node`/`_flatten_update_d`/`_flatten_is_viable_d`,
+  including the factorized-vs-non-factorized `CASE`
   behavior described there almost verbatim.
 - The passage explicitly says inlining's real contribution is *not*
   "UDF calls are gone" (DuckDB's own macro substitution already expands

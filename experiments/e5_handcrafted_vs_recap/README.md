@@ -1,20 +1,20 @@
 # E5 — Handcrafted vs. ReCAP-Optimized vs. Split/Reverse (2026-08-14)
 
 Per `experiments/new_experiments_checklist/recap_experiments_requirements.md`'s
-E5 (R4's single ranked point: "if ReCAP shows better performance, that changes
-the game" — is ReCAP just a veneer over hand-pushing the constraint into the
-`RECURSIVE` clause?). Q1 on real Metaverse data (`experiments/datasets/metaverse/`),
+E5: is ReCAP just a veneer over hand-pushing the constraint into the
+`RECURSIVE` clause, or does the abstraction genuinely cost something (or
+nothing) relative to hand-writing? Q1 on real Metaverse data (`experiments/datasets/metaverse/`),
 start vertex 383 (high-degree, matching every other Q1 experiment in this repo),
 ℓ ∈ {2..10}, min_length=2, all three configs using Q1's **full** constraint set
 (trail, region, risk-range, the last-risk gateway, amount) — not the simplified
 regex+monotonic-time-only cut `alternative_explorations/navigation_experiment/`
-uses for a different (R4.O2 navigation-style) question.
+uses for a different (segmented/non-forward navigation-style) question.
 
 ## The three configs
 
 1. **Handcrafted** — `ReCAP/q1/recap_gen_recap_inline.py` (the canonical
-   hand-inlined baseline, run directly, not re-implemented) — the plan R4
-   says the engine already gets "for free."
+   hand-inlined baseline, run directly, not re-implemented) — the result a
+   hand-optimized rewrite would already get "for free."
 2. **ReCAP-Optimized** — the new compiler's Stage F output (`recap-new-optimized`
    rows from `q1_length_sweep/results/new_compiler_q1.csv`, the E1 rerun).
 3. **Split (full constraints)** — new this session: `split_full.py`, extending
@@ -78,7 +78,7 @@ deferring the `last_risk >= 40` gate to `is_viable_d_final`, the optimized
 query keeps exploring the entire fraud suffix for paths that a
 state-aware check would have pruned at the seam — wasted work that grows with
 ℓ, exactly matching the widening gap observed. This is a genuine, useful data
-point for the R4 response, but it complicates the clean "(1)≈(2)" framing:
+point for the paper's response to this concern, but it complicates the clean "(1)≈(2)" framing:
 **the abstraction (Definition 8's `is_viable_d`/`is_viable_d_final` split)
 can express the tighter timing — the split/reverse realization and the
 hand-inlined query both do — but the specific factorized-only SQL generator

@@ -1,4 +1,4 @@
-"""Stage E: standard ReCAP SQL generation (FR-15..FR-18).
+"""Stage E: standard ReCAP SQL generation.
 
 No flattening or inlining yet -- that's Stage F, not built. Instead, the
 selective aggregate's five bodies (Stage D) are pasted **verbatim** as the
@@ -8,11 +8,11 @@ the generated recursive CTE just calls them by name. This works because a
 DuckDB macro's struct-typed parameter supports `.field` access exactly like
 a table alias does (confirmed empirically), so Stage D's `D.<key>`/
 `e.<column>` convention needs no rewriting at all to become real SQL --
-FR-18's default JSON/struct representation of `D` falls out for free.
+the default JSON/struct representation of `D` falls out for free.
 
 For a non-factorized aggregate, `update_d`/`is_viable_d` are a dict of
 per-`(from_state, to_state)` bodies (Stage D); those become a `CASE` over
-the transition pair inside the macro body, matching FR-12/FR-21 (the
+the transition pair inside the macro body (the
 `CASE` a human author would otherwise have hand-written).
 """
 from __future__ import annotations
@@ -43,10 +43,10 @@ MACRO_SIGNATURES = {
 
 @dataclass(frozen=True)
 class StandardQuery:
-    """FR-25: the generated SQL is a first-class, inspectable artifact.
+    """The generated SQL is a first-class, inspectable artifact.
     `cte` is the reusable `paths AS (...)` fragment (no `WITH RECURSIVE`
     prefix, no outer `SELECT`) -- Stage G reuses it to separately count
-    intermediate paths explored (FR-26) before the outer filter is applied,
+    intermediate paths explored before the outer filter is applied,
     since that count isn't otherwise recoverable from `sql` alone."""
 
     sql: str
@@ -66,7 +66,7 @@ def case_expression(bodies: dict[TransitionPair, str], *, default: str) -> str:
 
 
 def register_aggregate_macros(conn: duckdb.DuckDBPyConnection, aggregate: SelectiveAggregate) -> None:
-    """Pastes each of the five (already FR-14-validated) function bodies
+    """Pastes each of the five (already reference-validated) function bodies
     into a `CREATE OR REPLACE MACRO`, exactly as authored -- except
     `update_d`, which is normalized first (`normalize_update_d_body`): a
     key its body leaves out defaults to passing its previous value through
@@ -96,7 +96,7 @@ def register_aggregate_macros(conn: duckdb.DuckDBPyConnection, aggregate: Select
 
 def materialize_transitions(conn: duckdb.DuckDBPyConnection, relation: TransitionsRelation,
                              *, table_name: str = "transitions") -> None:
-    """FR-9's `T(from_state, to_state, label)` as a real DuckDB table, so the
+    """Materializes `T(from_state, to_state, label)` as a real DuckDB table, so the
     generated query can join against it by name."""
     df = to_dataframe(relation)
     conn.register("_transitions_df", df)
@@ -107,13 +107,13 @@ def materialize_transitions(conn: duckdb.DuckDBPyConnection, relation: Transitio
 def build_standard_query(*, relation: TransitionsRelation, start_vertices: list[int],
                           length_bound: int, edges_table: str = "edges",
                           transitions_table: str = "transitions") -> StandardQuery:
-    """FR-15..FR-18: the standard ReCAP query -- an anchor seeded from every
-    start vertex (FR-16, fixing R4.O3's unbound-`s` defect: `s` is introduced
-    via a `FROM` over a literal start-vertex relation, never a free
+    """The standard ReCAP query -- an anchor seeded from every
+    start vertex (`s` is introduced via a `FROM` over a literal
+    start-vertex relation, never a free-standing, unbound
     variable), a recursive member joining `Paths ⋈ Edges ⋈ T`, and an outer
     query filtering on the accepting states and `is_viable_d_final`. Always
     produces the full-paths shape; Stage G wraps this for the
-    endpoints/count shapes (FR-24), so result shaping stays out of SQL
+    endpoints/count shapes, so result shaping stays out of SQL
     generation. `register_aggregate_macros`/`materialize_transitions` must
     have already been run on the same connection this SQL will execute
     against.

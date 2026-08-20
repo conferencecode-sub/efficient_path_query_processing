@@ -3,7 +3,7 @@
 Q1's FULL constraint set (trail, region, risk-range, last-risk gateway,
 amount) -- unlike `alternative_explorations/navigation_experiment/common.py`,
 which is a deliberately simplified regex+monotonic-time-only cut for a
-different (R4.O2 navigation-style) question.
+different (segmented/non-forward navigation-style) question.
 
 Loads the real Metaverse dataset (`experiments/datasets/metaverse/`,
 78,600 edges / 1,320 vertices, matching tab:realdata) with every column

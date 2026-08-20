@@ -72,7 +72,7 @@ every other engine at every length except recap-inline/recap-new at k=2.
    rows at length 4, so materializing and returning them all client-side
    (what the original `run_new_compiler.py` timed) is real, non-comparable
    work no other engine does. Fixed the same way as Q1: a separate,
-   untimed `"paths"` pass just for the FR-22 check, with the actual timed
+   untimed `"paths"` pass just for the standard/optimized equivalence check, with the actual timed
    pass using `"count"`. This alone cut `recap-new-optimized`'s length=4
    number from 271.5ms to 66.7ms.
 
@@ -124,7 +124,7 @@ subprocesses for genuine per-variant memory (same rework as Q1 -- see that
 README). **First attempt used the highest-out-degree vertex (763) as the
 start vertex -- wrong**: the paper's own methodology picks *medium*-degree
 start vertices for Q2 (high only for Q1, low for Q3), so the real vertex
-used is 3999 (out-degree 2, the dataset's median). FR-22 verification
+used is 3999 (out-degree 2, the dataset's median). Equivalence verification
 switches from full result-set comparison to count-only beyond ℓ=3, since
 materializing full path structs (with `edge_ids` arrays) for millions of
 rows was the actual bottleneck, not query execution itself -- confirmed
@@ -152,9 +152,9 @@ as ℓ grows.
 
 ## E8 clarification: Standard-vs-competitors on Q2, with memory (2026-08-14)
 
-Per R5.M9's ask (`fig:performance_grid`'s "ReCAP" caption needed to say which
+Added for clarity: `fig:performance_grid`'s "ReCAP" caption needed to say which
 variant it means, and the Q2 discussion needed a Standard-vs-competitors point
-to make the piggybacking benefit unambiguous). Ran `ReCAP/q2/
+to make the piggybacking benefit unambiguous. Ran `ReCAP/q2/
 duckdb_two_color_trail_inline.py` (the genuine "DuckDB without ReCAP"
 baseline -- collects the full `colors` array per path, checks the
 two-adjacent-same-color condition via `UNNEST` only at the very end, no

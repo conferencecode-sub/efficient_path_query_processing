@@ -2,8 +2,8 @@
 Datagen-7.7 (`experiments/datasets/datagen7.7/`) -- a trail (no repeated
 edge) whose running sum of edge weight must stay `<= bound`.
 
-Combines FR-13(ii)'s `trail_via_edge_ids` shape (no repeated edge) with a
-running-sum bound analogous to FR-13(iii)'s `bounded_range`, but summed
+Combines the library's `trail_via_edge_ids` shape (no repeated edge) with a
+running-sum bound analogous to the library's `bounded_range`, but summed
 rather than max-min. Negatively stable/monotone because every edge weight
 in this dataset is strictly positive -- confirmed directly via DuckDB
 before writing this file: `SELECT min(weight), max(weight), count(*) FILTER

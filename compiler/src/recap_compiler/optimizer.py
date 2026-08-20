@@ -1,21 +1,21 @@
-"""Stage F: optimizer -- dictionary flattening + function inlining (FR-19..FR-23).
+"""Stage F: optimizer -- dictionary flattening + function inlining.
 
 Stage E pastes Stage D's five bodies verbatim as DuckDB macros and calls
 them by name; this stage instead **rewrites** those same (already
-FR-14-validated) bodies into plain SQL spliced directly into the query
+reference-validated) bodies into plain SQL spliced directly into the query
 text, with no macro layer and no struct-typed `D` column internally:
 
-- **Flattening (FR-19):** each dictionary key becomes its own typed column
+- **Flattening:** each dictionary key becomes its own typed column
   of `paths` instead of a field nested inside a struct `D`. This falls out
   of Stage D's own convention almost for free -- `init_d`/`update_d` are
   already written as a single struct literal `{key: expr, ...}`, so
   decomposing that literal by key (`_decompose_struct`) *is* the
   flattening.
-- **Inlining (FR-20):** `D.<key>` becomes a real column reference
+- **Inlining:** `D.<key>` becomes a real column reference
   (`p.<key>` in the recursive member, bare `<key>` in the outer query);
   `from_state`/`to_state` become `p.q`/`t.to_state`; `e.<column>` is left
   alone. No macro call remains anywhere in the generated SQL.
-- **FR-21:** a factorized aggregate's bodies rewrite to plain expressions;
+- A factorized aggregate's bodies rewrite to plain expressions;
   a non-factorized aggregate's `is_viable_d` rewrites to a single combined
   boolean `CASE` over transition pairs (matching Stage E's macro body
   shape), but `update_d` rewrites to **one plain `CASE` per dictionary
@@ -39,16 +39,15 @@ text, with no macro layer and no struct-typed `D` column internally:
   that needed it. One flat `CASE` per key avoids the struct/subquery
   machinery entirely -- each key is just its own scalar column, same as
   the factorized path, just with a `CASE` instead of one flat expression.
-- **FR-22 (semantics-preserving):** this is a correctness obligation, not
+- **Semantics-preserving:** this is a correctness obligation, not
   just a performance option -- see `tests/test_optimizer.py`'s equivalence
   tests against Stage E's standard query on the same inputs.
-- **FR-23:** a body that isn't a struct literal where one is expected (the
+- A body that isn't a struct literal where one is expected (the
   only "inlinable sublanguage" this cut supports) raises `UnsupportedError`
   naming the function, rather than silently producing wrong SQL. A real
-  UDF-macro fallback (the spec's own suggested behavior) isn't built yet --
-  every FR-13 library entry and every body this compiler has generated so
-  far already fits the struct-literal convention, so this hasn't been
-  needed in practice.
+  UDF-macro fallback isn't built yet -- every built-in library entry and
+  every body this compiler has generated so far already fits the
+  struct-literal convention, so this hasn't been needed in practice.
 """
 from __future__ import annotations
 
@@ -85,7 +84,7 @@ def _parse(body: str) -> exp.Expression:
 
 
 def _decompose_struct(body: str) -> dict[str, exp.Expression]:
-    """FR-19: splits a Stage D struct-literal body into one raw (not yet
+    """Splits a Stage D struct-literal body into one raw (not yet
     rewritten) expression per dictionary key."""
     tree = _parse(body)
     if not isinstance(tree, exp.Struct):
@@ -107,7 +106,7 @@ def _struct_literal_node(declared_keys: list[str], *, path_alias: str | None) ->
 
 def _rewrite_node(node: exp.Expression, *, path_alias: str | None,
                    state_map: dict[str, str], declared_keys: list[str]) -> exp.Expression:
-    """FR-20: `D.<key>` -> `<path_alias.>key`; bare `D` -> the whole
+    """`D.<key>` -> `<path_alias.>key`; bare `D` -> the whole
     dictionary reconstructed as a struct from the flattened columns;
     `from_state`/`to_state` -> whatever `state_map` says; `e.<column>`
     unchanged."""
@@ -138,7 +137,7 @@ def _flatten_update_d(aggregate: SelectiveAggregate, *, declared_keys: list[str]
     `KeyError`) and, if it was written as one or more `D.<key> = <expr>`
     assignments, into the equivalent struct literal `_decompose_struct`
     already knows how to handle. The same normalization Stage E applies
-    before pasting into a macro, so the two stages agree (FR-22).
+    before pasting into a macro, so the two stages agree.
 
     Non-factorized: one flat `CASE` per key (see this module's docstring
     for why -- measured faster than one combined struct-valued `CASE`)."""
@@ -180,7 +179,7 @@ def _flatten_update_d(aggregate: SelectiveAggregate, *, declared_keys: list[str]
 
 def _flatten_is_viable_d(aggregate: SelectiveAggregate, *, declared_keys: list[str]) -> str:
     """Returns a single flattened+inlined boolean expression (a `CASE` over
-    transition pairs when non-factorized, matching FR-21)."""
+    transition pairs when non-factorized)."""
     if aggregate.factorized:
         return _rewrite_sql(aggregate.is_viable_d, path_alias="p",
                              state_map=RECURSIVE_STATE_MAP, declared_keys=declared_keys)
@@ -198,9 +197,9 @@ def build_optimized_query(*, aggregate: SelectiveAggregate, relation: Transition
                            edges_table: str = "edges",
                            transitions_table: str = "transitions") -> OptimizedQuery:
     """The flattened, inlined equivalent of `standard_sql.build_standard_query`
-    for the same inputs -- same anchor-seeding fix (FR-16), same join
-    structure, but no `D` struct column and no macro calls internally
-    (FR-19/FR-20). `D` is still reconstructed as a struct in the *output*
+    for the same inputs -- same anchor-seeding fix, same join
+    structure, but no `D` struct column and no macro calls internally.
+    `D` is still reconstructed as a struct in the *output*
     columns (`D`/`result`) for a readable, apples-to-apples comparison
     against the standard query's output shape.
 

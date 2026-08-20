@@ -78,7 +78,7 @@ vertex 9). Fixed in `run_new_compiler.py` via `_with_min_length`, which
 wraps `query.sql` in an outer `WHERE path_length >= 2` before timing/
 counting (a plain `SimpleNamespace(sql=..., cte=...)` works with
 `run_query` since it only ever reads those two attributes). Confirmed via
-FR-22 and by matching every other engine's count exactly after the fix.
+the standard/optimized equivalence check and by matching every other engine's count exactly after the fix.
 
 ## Reproduce
 

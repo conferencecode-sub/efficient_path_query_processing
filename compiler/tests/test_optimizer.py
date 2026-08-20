@@ -25,7 +25,7 @@ def _conn_with_edges(rows):
 def _both_queries(conn, aggregate, relation, *, start_vertices, length_bound):
     """Registers macros + transitions once, then builds both the standard
     (Stage E) and optimized (Stage F) queries against the same connection,
-    so FR-22 equivalence tests are comparing the exact same inputs."""
+    so the equivalence tests are comparing the exact same inputs."""
     register_aggregate_macros(conn, aggregate)
     materialize_transitions(conn, relation)
     standard = build_standard_query(relation=relation, start_vertices=start_vertices,
@@ -70,7 +70,7 @@ def test_optimized_query_prunes_the_same_way_as_standard_query():
     assert reached == {1, 2, 3}  # vertex 4 pruned, same as the standard query (see test_standard_sql.py)
 
 
-# --- FR-22: results must match the standard query, not just "look similar" -
+# --- Results must match the standard query, not just "look similar" -------
 
 @pytest.mark.parametrize("length_bound", [1, 2, 3, 4])
 def test_fr22_factorized_equivalence_across_length_bounds(length_bound):
@@ -130,7 +130,7 @@ def test_fr22_no_dictionary_keys_equivalence():
 
 def test_fr22_trivial_relation_equivalence():
     """A regex-less query (`trivial_relation()`) still has to agree between
-    Stage E and Stage F -- same FR-22 obligation, just with a single
+    Stage E and Stage F -- same equivalence obligation, just with a single
     self-looping state instead of a real regex's NFA."""
     conn = _conn_with_edges([
         (1, 1, 2, "purchase", 10.0), (2, 2, 3, "purchase", 20.0),
@@ -301,7 +301,7 @@ def test_uniform_update_d_body_collapses_to_a_flat_expression_no_case():
                       in conn.execute(standard.sql).fetchall()}
     optimized_rows = {(v, q, path_length) for v, q, _d, path_length, _r
                        in conn.execute(optimized.sql).fetchall()}
-    assert standard_rows == optimized_rows  # FR-22, not just a shape check
+    assert standard_rows == optimized_rows  # exact match, not just a shape check
     assert optimized.sql.count("CASE") == 1  # only is_viable_d's -- update_d collapsed away
 
 

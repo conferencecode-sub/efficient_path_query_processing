@@ -2,8 +2,9 @@
 
 Compiles a label regex into an epsilon-free NFA. Thompson's-construction and
 epsilon-removal are delegated to pyformlang -- per the requirements doc's
-mechanization note (Section 5.B, Section 8), this step is non-novel and a
-library removes an avenue of reviewer doubt about correctness.
+mechanization note (Section 5.B, Section 8), this step is non-novel, so
+delegating to a well-tested library avoids the risk of a subtle bug in a
+hand-rolled Thompson's construction.
 
 IMPORTANT: pyformlang's `Regex` only implements concatenation, union (`|`),
 Kleene star (`*`), parentheses, and `$`/`epsilon` -- *not* `+`, `?`, or
@@ -160,7 +161,7 @@ def compile_regex_to_nfa(pattern: str, *, minimize: bool = False) -> NFA:
     an optional pass but shall not be the default": non-determinism is
     handled natively by the recursive join, and *not* collapsing states is
     what keeps the NFA compatible with wavefront/segment-style planners
-    (R4.O2) -- exactly the property `alternative_explorations/
+    -- exactly the property `alternative_explorations/
     navigation_style_experiment.md` exercises. So `minimize=False` here is
     the required default, not just a cautious one; pass `minimize=True`
     only when that compatibility genuinely doesn't matter for the query at

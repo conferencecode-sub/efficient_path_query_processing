@@ -145,12 +145,12 @@ def test_q1_style_regex_accepts_grow_then_fraud_only():
     assert not _accepts(nfa, ["phishing", "transfer"])  # wrong order
 
 
-# --- FR-7: minimization is opt-in only, default stays False --------------
+# --- Minimization is opt-in only, default stays False ----------------------
 
 def test_minimize_defaults_to_false():
-    """FR-7: preserving the raw (non-minimized) NFA is the required
+    """Preserving the raw (non-minimized) NFA is the required
     default -- it's what keeps ReCAP compatible with wavefront/segment
-    planners (R4.O2). Q1's own regex is a concrete case where the default
+    planners. Q1's own regex is a concrete case where the default
     produces many more states than the minimal automaton (found via
     experiments/q1_length_sweep -- see CHECKLIST.md)."""
     nfa = compile_regex_to_nfa("(transfer|purchase|sale)+(phishing|scam)+")

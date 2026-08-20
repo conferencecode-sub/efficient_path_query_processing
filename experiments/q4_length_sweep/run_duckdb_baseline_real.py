@@ -10,7 +10,7 @@ Uses `q4_default_aggregate` (walk semantics, no early pruning, property
 checked once in `is_viable_d_final`) through the same Stage F compiler
 pipeline as `run_new_compiler.py`, which is what Section 4.2's default
 construction reduces to -- functionally identical to a hand-written
-non-ReCAP recursive query, and FR-22-verified to match `q4_aggregate`'s
+non-ReCAP recursive query, and verified to match `q4_aggregate`'s
 early-filtered result set at every length tested below before trusting
 the timing numbers.
 """
@@ -66,8 +66,8 @@ def _setup_default(length):
 
 
 def _reference_result(length):
-    """The already-trusted early-filtered result, for a same-length FR-22
-    style cross-check before trusting the default-construction number."""
+    """The already-trusted early-filtered result, for a same-length
+    equivalence cross-check before trusting the default-construction number."""
     from run_new_compiler import _setup
     conn, _std, opt_q = _setup(length)
     n = run_query(conn, opt_q, result_shape="count").rows[0][0]

@@ -1,15 +1,17 @@
 """Q1's real selective aggregate, hand-translated into the new compiler's
 Definition-8 shape from `ReCAP/q1/duckdb_gen_recap.py`'s own hardcoded SQL
 (the source of truth for what Q1 actually checks -- there's no existing
-compiler-side Q1 entry, only the 3 generic FR-13 library aggregates).
+compiler-side Q1 entry, only the 3 generic library aggregates).
 
 Q1's constraint, factored into per-hop-checkable pieces:
   - trail: no edge id reused (checked over the *whole* path, both the
-    normal and fraud portions) -- same idea as FR-13(ii) trail_via_edge_ids.
-  - strictly increasing timestamps, again over the whole path -- FR-13(i)
-    adjacent_edge_predicate with comparator='>'.
+    normal and fraud portions) -- same idea as the library's
+    trail_via_edge_ids.
+  - strictly increasing timestamps, again over the whole path -- the
+    library's adjacent_edge_predicate with comparator='>'.
   - all edges share one location_region (first-seen region sticks).
-  - FR-13(iii)-style bounded range (max-min risk_score <= 20), but scoped
+  - bounded-range-style (same shape as the library's bounded_range)
+    max-min risk_score <= 20, but scoped
     to only the *normal*-labelled prefix (transfer/purchase/sale), via a
     CASE on `e.label` -- deliberately keeps this factorized (no NFA-state
     dependency) since `e.label` is a real edge column, exactly like the

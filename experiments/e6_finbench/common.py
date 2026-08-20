@@ -18,7 +18,7 @@ dst`) -- a standard, narrow technique for a single-direction traversal
 engine, not a general reversal planner. It's also pre-filtered to
 `medium.isBlocked = true` at construction time, which is exactly
 equivalent to the Cypher's own `Medium {isBlocked: true}` node-label
-filter -- ReCAP's aggregates only see edge properties (FR-13's `e.<column>`
+filter -- ReCAP's aggregates only see edge properties (the `e.<column>`
 convention), not vertex properties, so folding the vertex filter into which
 edges exist at all avoids needing vertex-property support for this one
 query.

@@ -21,7 +21,7 @@ compiler/
 │   ├── regex_frontend.py            Stage B: regex -> epsilon-free NFA
 │   ├── transitions.py               Stage C: NFA -> T(from_state,to_state,label), q0, Q_F
 │   ├── selective_aggregate.py       Stage D: aggregate data model, CASE-skeleton
-│   │                                 generation, FR-13 library entries, FR-14 validation
+│   │                                 generation, pre-written library entries, input validation
 │   ├── standard_sql.py              Stage E: generates the WITH RECURSIVE query;
 │   │                                 pastes Stage D's bodies as DuckDB macros
 │   ├── optimizer.py                 Stage F: flattens D's dictionary keys into
@@ -52,15 +52,15 @@ streamlit run webapp/app.py
 ```
 
 This opens a browser tab: pick or upload an edges CSV (defaults to the
-bundled sample dataset, nothing is hard-coded per FR-33). It shows a
+bundled sample dataset, nothing is hard-coded). It shows a
 10-row preview of the loaded edges and, if there's a `label` column, the
 full label alphabet -- so you know what's actually in the data before
 writing a regex against it. (Every edges table is guaranteed to have an
-`edge_id` column, real or synthesized, per FR-13(ii)'s trail semantics --
-see `CHECKLIST.md`.) Then type a label regex -- the NFA state/transition
+`edge_id` column, real or synthesized, to support the trail-semantics
+library entry's needs -- see `CHECKLIST.md`.) Then type a label regex -- the NFA state/transition
 count updates live as you type, before you've touched anything else (the
 transitions table itself isn't shown, since it can get large fast). Then
-choose start vertices, and then either pick one of the three FR-13 library
+choose start vertices, and then either pick one of the three built-in library
 aggregates and its parameters, or switch to **custom aggregate** to author
 your own: write `init_d`, and its dictionary keys and their types are
 inferred automatically (via DuckDB's own type system) and shown live in a
@@ -79,8 +79,7 @@ previous value unchanged instead of being dropped from `D`. Set
 a length bound and click **Compile & run**.
 It shows the generated SQL (both the unoptimized Stage E and optimized
 Stage F versions, if you leave the comparison checkbox on), the actual
-DuckDB results, a pass/fail banner confirming the two queries agree
-(FR-22), and a stage-by-stage timing breakdown (bar chart + table) covering
+DuckDB results, a pass/fail banner confirming the two queries agree, and a stage-by-stage timing breakdown (bar chart + table) covering
 every step that run went through -- parsing the regex, loading the graph,
 validating the aggregate, generating SQL, and executing each query. On the
 bundled dataset, expect loading to dominate the "compile" side (~230ms,
@@ -104,7 +103,7 @@ regex can have 100+ pairs, so that's deliberately not offered here yet).
 of a UI -- loads the real sample dataset, compiles the paper's Q1 regex,
 generates *both* the standard (Stage E) and optimized (Stage F) SQL for the
 same aggregate, runs both on DuckDB, checks they return the exact same
-paths (FR-22), and prints a timing breakdown covering every stage it went
+paths, and prints a timing breakdown covering every stage it went
 through, not just the two queries' own runtimes:
 
 ```bash
@@ -122,7 +121,7 @@ avoiding struct-field-access overhead on `D`, not removing a function call.
 See `CHECKLIST.md`'s Stage F completion note for the full story.
 
 To poke at a stage directly instead, e.g. to try a different regex, a
-different FR-13 library entry, or a different start vertex/length bound:
+different library aggregate entry, or a different start vertex/length bound:
 
 ```python
 import duckdb
@@ -147,7 +146,7 @@ materialize_transitions(conn, relation)
 starts = select_start_vertices(handle, ids=[383])
 query = build_optimized_query(aggregate=aggregate, relation=relation,
                                start_vertices=starts, length_bound=3)  # max edges per path
-print(query.sql)  # the generated SQL, inspectable (FR-25)
+print(query.sql)  # the generated SQL, inspectable
 
 result = run_query(conn, query, result_shape="paths")  # or "endpoints" / "count"
 print(len(result.rows), result.telemetry)
@@ -170,7 +169,7 @@ A-G plus the timing-breakdown utility; I has no automated tests yet, see
 `CHECKLIST.md`) -- a graph + regex + selective aggregate (library or
 custom) can be compiled
 to both unoptimized and optimized SQL, actually run on DuckDB, and driven
-either from a script or a browser UI today, with FR-22 equivalence checked
+either from a script or a browser UI today, with standard/optimized equivalence checked
 directly in tests, the demo script, and the UI. H (the negative-stability
 verifier) remains intentionally deferred/optional per the spec. An optional
 LLM-assisted aggregate authoring module (J) was built, live-tested, and

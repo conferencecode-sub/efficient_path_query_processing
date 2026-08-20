@@ -1,9 +1,9 @@
-"""Stage G: execution and results (FR-24..FR-26).
+"""Stage G: execution and results.
 
 Runs a Stage E `StandardQuery` on DuckDB and shapes the output as full
-paths, reached endpoints, or a count (FR-24) -- all three enumerate the same
+paths, reached endpoints, or a count -- all three enumerate the same
 viable paths internally (the same underlying query), so timing is
-independent of output shape, per the paper's methodology. Telemetry (FR-26):
+independent of output shape, per the paper's methodology. Telemetry:
 wall-clock time, the number of rows the recursive CTE actually produced
 before the outer filter (the "intermediate paths explored" figure the paper
 reports), and peak DuckDB buffer memory (2026-08-11, per user request).
@@ -16,7 +16,7 @@ query after a large one on the same connection still reports the large
 one's peak). So this number is accurate for the common case of one fresh
 `duckdb.connect()` per measured run (true of `demo_pipeline.py` and of the
 webapp's own "Compile & run" click), but if two queries share one
-connection (the webapp's FR-22 standard-vs-optimized comparison does this),
+connection (the webapp's standard-vs-optimized comparison does this),
 the second one's reported peak includes the first's memory too, not just
 its own. No isolation trick (e.g. reconnecting between queries) is applied
 here, since that would mean reloading the whole graph a second time --
@@ -52,13 +52,13 @@ class QueryResult:
     rows: list[tuple]
     columns: list[str]
     telemetry: Telemetry
-    sql: str  # FR-25: the generated SQL, exposed as an inspectable artifact
+    sql: str  # the generated SQL, exposed as an inspectable artifact
 
 
 def run_query(conn: duckdb.DuckDBPyConnection, query: StandardQuery | OptimizedQuery, *,
               result_shape: str = "paths") -> QueryResult:
-    """FR-24: executes `query.sql` and returns results in the requested
-    shape. FR-25/FR-26: the SQL text and basic telemetry ride along on every
+    """Executes `query.sql` and returns results in the requested
+    shape. The SQL text and basic telemetry ride along on every
     call, not just on request, since they're cheap to keep. Accepts either
     Stage E's `StandardQuery` or Stage F's `OptimizedQuery` -- both expose
     the same `.sql`/`.cte` shape."""

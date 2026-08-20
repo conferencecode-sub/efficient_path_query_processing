@@ -11,13 +11,13 @@ briefly had two drafts. Decision: keep `compiler_reqs.md`'s existing
 Section 13 framing for the negative-stability verifier (Module H stays a
 stretch objective, SMT work deferred -- the FULL draft's un-demotion of it
 was **not** adopted), but merge in the FULL draft's **Part II / Module J**
-(LLM-assisted selective-aggregate authoring, FR-34..43, NFR-6..9) as a new
+(LLM-assisted selective-aggregate authoring) as a new
 committed-but-optional part of `compiler_reqs.md`. `recap_compiler_requirements_FULL.md`
 is now marked superseded in its own header; `compiler_reqs.md` is the single
 source of truth again. Module J is an optional branch inside Stage D (a
 proposer that drafts `is_viable_d`/`update_d` bodies into D's skeleton,
 gated by a fail-safe negative-stability classification and the same
-FR-14/FR-23 validation as manual input) -- added as its own row below,
+validation as manual input) -- added as its own row below,
 **not started**, and explicitly not required for the mini end-to-end demo
 (regex + aggregate + graph -> DuckDB results) that Stage E/G below target.
 
@@ -25,8 +25,8 @@ Build order rationale: A and B+C have no dependencies on the rest of the
 pipeline and unblock everything downstream (D and E both need the
 transitions relation from C; E needs an aggregate from D), so they're built
 and tested first. F (the optimizer) is the paper's actual novel contribution
-but needs E working as its correctness baseline (NFR-2 compares standard vs.
-optimized output), so it comes after E/G. I (the workbench UI) comes last --
+but needs E working as its correctness baseline (comparing standard vs.
+optimized output for equivalence), so it comes after E/G. I (the workbench UI) comes last --
 it's glue over an already-working pipeline.
 
 ## Completed: Stage F's non-factorized `update_d` reverted to one flat `CASE` per key, plus a real uniform-body-collapse optimization -- measured, not assumed (2026-08-18)
@@ -58,8 +58,8 @@ is byte-identical and collapses that key to a flat expression -- no
 actually take more than one branch of. Two new regression tests
 (`test_non_factorized_update_d_uses_one_flat_case_per_key_not_a_combined_
 struct_case`, `test_uniform_update_d_body_collapses_to_a_flat_expression_
-no_case`), the latter checked against real DuckDB execution (FR-22), not
-just a shape assertion. 162 tests pass.
+no_case`), the latter checked against real DuckDB execution (standard vs.
+optimized equivalence), not just a shape assertion. 162 tests pass.
 
 Separately used this same infra to test switching `tab:e4_isolation`'s
 "early property filtering" configuration from factorized to General mode,
@@ -114,7 +114,7 @@ confidence gate.
 **Same non-privileged-path guarantee as before:** the drafted values land
 in the exact same `custom_init_d`/table cells/`custom_is_viable_d_final`/
 `custom_finalize_d` widgets a human would type into, then go through the
-identical FR-14/FR-23 validation and FR-22 optimizer-equivalence checks
+identical validation and standard/optimized-equivalence checks
 before Compile & run -- no separate code path for LLM output.
 
 **A real Streamlit issue found and fixed while wiring up the UI:** writing
@@ -209,7 +209,7 @@ accurate per-stage timing, comment updated to say so plainly.
 Verified via `streamlit.testing.v1.AppTest`: app loads with sections in
 the new order, General mode's checkbox still drops the table from 62 to
 4 rows for a random per-run regex example, and Compile & run still gets
-a real FR-22 PASS (33,921 paths). 151 tests unchanged/passing.
+a real standard/optimized-equivalence PASS (33,921 paths). 151 tests unchanged/passing.
 
 ## Completed: General mode gets a "minimize first" checkbox and a guiding example (2026-08-18)
 
@@ -246,7 +246,7 @@ change needed (the user was checking their own understanding).
 `new_compiler_requirements/compiler_reqs.md` Section 10 -- the paper's
 own Figure 5 worked instantiation (`Domestic+ Foreign`, `T =
 {(1,2,Domestic), (2,2,Domestic), (2,3,Foreign)}`), since that's exactly
-the example this whole feature (FR-40) was modeled on. Shows the concrete
+the example this whole General-authoring feature was modeled on. Shows the concrete
 3-row table (`update_d` identical on every row; `is_viable_d` differs by
 transition -- ±2 days while still inside the `Domestic+` run vs. ±3 days
 on the one hop into `Foreign`) as a static reference table, not wired to
@@ -256,7 +256,7 @@ Verified via `streamlit.testing.v1.AppTest`, actually toggling the new
 checkbox (not just checking the app loads): table row count dropped
 35→4, the guiding-example expander rendered its 3-row static table
 correctly, and a real Compile & run with the checkbox on still got an
-FR-22 PASS (8,851 paths). 151 tests unchanged/passing -- workbench-only.
+standard/optimized-equivalence PASS (8,851 paths). 151 tests unchanged/passing -- workbench-only.
 
 ## Completed: restructured Section 4 (renamed "ReCAP") around Factorized/General, per explicit user request (2026-08-18)
 
@@ -276,7 +276,7 @@ before building):** a top-level "Aggregate structure" radio
 per-`(from_state, to_state)` table, one click away, no "Author a custom
 aggregate" checkbox needed to find it). **Factorized** keeps exactly
 today's combine behavior (pre-built aggregate(s) + a custom factorized
-one, both optional, combining via `combine_library_aggregates` (FR-34)
+one, both optional, combining via `combine_library_aggregates`
 same as before) -- per the user's explicit confirmation that pre-built
 and custom factorized aggregates should still combine. The invalid
 General+library combination is now structurally unreachable rather than
@@ -306,11 +306,11 @@ widget layout changed.
 Verified via `streamlit.testing.v1.AppTest`, actually driving the app
 (not just checking it loads): switched to General mode, confirmed the
 preview expander renders a correct multi-branch `CASE` for both
-`update_d`/`is_viable_d`, clicked **Compile & run**, and got a real FR-22
-PASS (5,734 paths, standard vs. optimized agree) on the bundled dataset's
+`update_d`/`is_viable_d`, clicked **Compile & run**, and got a real
+standard/optimized-equivalence PASS (5,734 paths, standard vs. optimized agree) on the bundled dataset's
 default regex/table. Separately verified Factorized mode still combines
-a pre-built aggregate with a custom factorized one and gets a real FR-22
-PASS (7 paths). 151 tests still pass (no test-suite changes needed --
+a pre-built aggregate with a custom factorized one and gets a real
+standard/optimized-equivalence PASS (7 paths). 151 tests still pass (no test-suite changes needed --
 this was a workbench-only restructuring, no compiler-core behavior
 changed).
 
@@ -355,7 +355,7 @@ now-confirmed-safe Q1 case and the confirmed-ambiguous synthetic case.
 decision ("minimizing would be ideal, just give the appropriate
 warning").** Three options were on the table -- auto-escalate only when
 ambiguous, flip the global default to `minimize=True`, or warn without
-auto-fixing -- user picked auto-escalate-when-ambiguous, keeping FR-7's
+auto-fixing -- user picked auto-escalate-when-ambiguous, keeping the
 `minimize=False` default intact for every regex that doesn't need the
 fix. New `transitions.guard_against_ambiguity(pattern, nfa, relation) ->
 (nfa, relation, warning_message | None)`: no-op when unambiguous or
@@ -364,7 +364,7 @@ already `minimize=True`; when ambiguous, recompiles with `minimize=True`
 heuristic), emits a `warnings.warn`, and returns the same message string
 so a UI caller can also display it directly (a bare Python warning is
 easy to miss outside a terminal). The message explicitly names the
-wavefront/segment-splitting compatibility tradeoff (FR-7, R4.O2) so a
+wavefront/segment-splitting compatibility tradeoff so a
 caller relying on that isn't silently surprised by a state-structure
 change. Wired into both real `compile_regex_to_nfa()`-then-
 `build_transitions_relation()` call sites in `webapp/app.py` (the live
@@ -431,7 +431,7 @@ existing test asserted the old (buggy) pass-through behavior by name
 (`test_normalize_update_d_body_still_passes_through_bare_D`) and was
 updated, not just made to pass; two new end-to-end regression tests added
 in `test_optimizer.py` (factorized and non-factorized bare-`D`, each
-checked for FR-22 agreement, not just "doesn't crash").
+checked for standard/optimized agreement, not just "doesn't crash").
 
 Verified: 143 tests pass (was 140; +1 new in `test_selective_aggregate.py`,
 +2 in `test_optimizer.py`), plus `streamlit.testing.v1.AppTest` driving
@@ -440,7 +440,7 @@ right default content/labels for a real automaton (62-69 pairs, varies
 with the randomly-drawn example regex), the `>50` warning fires, General
 mode is correctly absent from the aggregate-source's library branch, and
 (after the bare-`D` fix) a full Compile & run in General mode with
-all-default rows produces a real FR-22 PASS -- not just "no exception."
+all-default rows produces a real standard/optimized-equivalence PASS -- not just "no exception."
 `AppTest`'s `data_editor` support doesn't expose a way to script a cell
 edit in this Streamlit version, so the specific "user edits one row"
 interaction wasn't exercised live; the underlying dict constructed from
@@ -449,7 +449,7 @@ by `test_optimizer.py`'s non-factorized tests.
 
 ## Completed: library + custom aggregates now combine additively (2026-08-17)
 
-Follow-up to FR-34..39 below, per user feedback after using it: "Aggregate
+Follow-up to the workbench UI checklist items below, per user feedback after using it: "Aggregate
 source" was a mutually-exclusive radio (Library vs. Custom), so (a)
 switching between them threw away whatever was in the other, and (b)
 there was no way to combine a library entry with a custom-authored one,
@@ -461,7 +461,7 @@ Replaced the radio with two independent checkboxes, "Use library
 aggregate(s)" and "Author a custom aggregate" (library defaults on,
 custom defaults off, matching the old radio's default). Both can be
 checked at once; whatever is picked/authored across both is combined at
-compile time via the same FR-34 `combine_library_aggregates` (1 item ->
+compile time via the same `combine_library_aggregates` (1 item ->
 used directly, 2+ -> combined, 0 -> a friendly error instead of a crash).
 
 **Also investigated, and worth recording precisely:** giving the custom
@@ -490,61 +490,57 @@ library `bounded_range` (on `edge_id`, this dataset's first numeric
 column) with a custom `edge_count` tracker in one run and inspected the
 actual generated SQL, confirming both aggregates' keys
 (`max_edge_id`/`min_edge_id` and `edge_count`) and both viability checks
-appear in one combined struct/predicate, with FR-22 passing (17 paths,
+appear in one combined struct/predicate, with standard/optimized equivalence passing (17 paths,
 exact match). 140 tests still pass (no compiler-source file changed,
 `webapp/app.py` only).
 
-## Completed: FR-34..FR-39, the workbench UI checklist (2026-08-17)
+## Completed: workbench UI checklist items (2026-08-17)
 
-Implements the six requirements added to `new_compiler_requirements/
+Implements six requirements added to `new_compiler_requirements/
 compiler_reqs.md` (and its `CHANGELOG.md`) earlier the same day, from a
-query-author UI checklist (`compiler/more_add_ons/checklist.txt`). Note
-the FR-34..39 numbers here are unrelated to the old, since-removed Module J
-draft's FR-34..43 (see "Module J" below, dated 2026-08-11) -- those numbers
-were freed when Module J was removed and have been reused for this
-unrelated work; `compiler_reqs.md` itself has no trace of Module J left.
+query-author UI checklist (`compiler/more_add_ons/checklist.txt`).
 
-- **FR-34** (`selective_aggregate.py`): new `combine_library_aggregates(*aggregates)`
+- **Combining multiple library aggregates** (`selective_aggregate.py`): new `combine_library_aggregates(*aggregates)`
   -- unions dictionary keys (rejects same-name collisions via `RefError`/E-REF),
   conjoins `is_viable_d`/`is_viable_d_final`, keeps each entry's own
   `init_d`/`update_d` logic on its own keys. Factorized-only. 7 new tests
   in `test_selective_aggregate.py`.
-- **FR-4 amendment + FR-37** (`ingestion.py`, `webapp/app.py`): `select_start_vertices`
+- **All-vertices default + `;`-separated start-vertex list** (`ingestion.py`, `webapp/app.py`): `select_start_vertices`
   now defaults to every distinct `src` in Edges when none of ids/predicate/
   degree_band is given (was previously a required-exactly-one error);
   the workbench's start-vertex text input accepts `;`-separated ids and
   maps an empty value to this new default. 1 test changed (behavior
   intentionally changed), 1 new test added in `test_ingestion.py`.
-- **FR-35** (`webapp/app.py`): a `D1`/`D2`/`merge(D1, D2)` text-area expander,
+- **Merge-function sketch box** (`webapp/app.py`): a `D1`/`D2`/`merge(D1, D2)` text-area expander,
   explicitly labeled "sketch only -- not run" -- authoring aid, not wired
   into Stage E/F, per Section 12 non-goal 3. **Placement amended same day**
   per user feedback: moved from a separate, always-visible section to
   directly beneath `update_d` in the custom-aggregate flow only (absent
   in library-aggregate mode), with `D1`/`D2` defaults seeded from the
   author's own `init_d` keys instead of a generic example -- see
-  `compiler_reqs.md`'s FR-35 and its `CHANGELOG.md`.
-- **FR-36** (`webapp/app.py`): a regex-syntax-help expander next to the
+  `compiler_reqs.md`'s own entry and its `CHANGELOG.md`.
+- **Regex operator help** (`webapp/app.py`): a regex-syntax-help expander next to the
   regex input, covering `|`, concatenation, `*`, `+`, `?`, `{m,n}`, and
   quoted labels.
-- **FR-38** (`webapp/app.py`, presentation only): dropped "(factorized
+- **Dropped the "factorized" label** (`webapp/app.py`, presentation only): dropped "(factorized
   only)"/"Factorized only:" from the two places the workbench showed that
-  word to the author; radio option renamed "Custom aggregate" ->
-  "Custom aggregate". No behavior change -- `factorized=True` is still
-  set internally (FR-12/FR-21 untouched).
-- **FR-39** (`webapp/app.py`): added a `help=` tooltip (role + >=2 worked
+  word to the author; radio option kept as "Custom aggregate". No behavior change --
+  `factorized=True` is still set internally (the underlying factorized/non-factorized
+  distinction is untouched).
+- **Per-function tooltips** (`webapp/app.py`): added a `help=` tooltip (role + >=2 worked
   examples) to `is_viable_d`, `is_viable_d_final`, and `finalize_d`, which
   previously had none at all; expanded `init_d`/`update_d`'s existing
   tooltips to the same role+examples shape.
-- The FR-13 library picker became a `st.multiselect` (was `st.selectbox`)
-  so more than one kind can be picked and combined via FR-34 above; each
-  picked kind renders its own parameter widgets with kind-scoped keys.
+- The library picker became a `st.multiselect` (was `st.selectbox`)
+  so more than one kind can be picked and combined via the aggregate-combining
+  change above; each picked kind renders its own parameter widgets with kind-scoped keys.
 
 Validated two ways: `pytest` (140 passed, up from 132 -- 8 new, 0 broken),
 and `streamlit.testing.v1.AppTest` driving the actual workbench headlessly
 (no browser available in this environment) through every new path --
-single library aggregate, FR-34's two-aggregate combination (confirmed a
-real FR-22 PASS, not just "no exception"), FR-37's `;`-list, FR-4's
-empty-input all-vertices default (1,161 vertices, correctly capped to 5),
+single library aggregate, the two-aggregate combination (confirmed a
+real standard/optimized equivalence PASS, not just "no exception"), the `;`-list,
+the empty-input all-vertices default (1,161 vertices, correctly capped to 5),
 custom-aggregate mode, degree-band mode, and the invalid-input error
 message path.
 
@@ -599,25 +595,25 @@ directly.
 
 ## Pipeline stages
 
-| # | Stage | Requirements | Status | Completed | Code | Tests |
-|---|---|---|---|---|---|---|
-| A | Data ingestion | FR-1..FR-4 | **Done** | 2026-08-06 (edge_id fix 2026-08-10) | `src/recap_compiler/ingestion.py` | `tests/test_ingestion.py` (13 cases) |
-| B | Regex frontend (Thompson's construction) | FR-5..FR-8 | **Done** | 2026-08-06 | `src/recap_compiler/regex_frontend.py` | `tests/test_regex_frontend.py` (14 cases) |
-| C | NFA -> transitions relation | FR-9, FR-10 | **Done** | 2026-08-06 | `src/recap_compiler/transitions.py` | `tests/test_transitions.py` (6 cases) |
-| D | Selective-aggregate frontend + skeleton generation | FR-11..FR-14 | **Done** | 2026-08-10 | `src/recap_compiler/selective_aggregate.py` | `tests/test_selective_aggregate.py` (25 cases) |
-| E | Standard ReCAP SQL generation | FR-15..FR-18 | **Done** (unoptimized -- see notes) | 2026-08-10 | `src/recap_compiler/standard_sql.py` | `tests/test_standard_sql.py` (5 cases; `update_d` normalization covered via `test_optimizer.py`'s FR-22 equivalence tests) |
-| G | Execution + telemetry | FR-24..FR-26 | **Done** (minimal telemetry) | 2026-08-10 | `src/recap_compiler/execution.py` | `tests/test_execution.py` (6 cases) |
-| F | Optimizer: dictionary flattening + function inlining | FR-19..FR-23 | **Done** | 2026-08-10 | `src/recap_compiler/optimizer.py` | `tests/test_optimizer.py` (16 cases, incl. FR-22 equivalence) |
-| I | Workbench orchestration | FR-32, FR-33 | **Done** (MVP scope, now incl. factorized custom-aggregate authoring -- see notes) | 2026-08-10 | `webapp/app.py` | manual/bare-mode smoke test + a standalone script exercising the custom-aggregate code path directly (see notes); no automated UI tests |
-| Section 7 | Error taxonomy (cross-cutting) | E-INPUT, E-REGEX now; E-REF/E-TYPE/E-UNSUPPORTED/E-EXEC land with D/F/G | **Scaffolded** | 2026-08-06 | `src/recap_compiler/errors.py` | exercised via A/B tests |
-| -- | Stage-by-stage timing breakdown (not a spec item -- diagnostic/demo tool) | n/a | **Done** | 2026-08-10 | `src/recap_compiler/profiling.py` | `tests/test_profiling.py` (6 cases) |
-| H (stretch) | Negative-stability verifier | FR-27..FR-31 (Section 13, not committed) | Not started | -- | -- | -- |
-| J (optional) | LLM-assisted selective-aggregate authoring | *(spec section removed)* | **Done** (reintroduced 2026-08-18: hosted Claude API backend, full per-transition-pair draft scope -- see notes) | built 2026-08-11, removed 2026-08-11, reintroduced 2026-08-18 | `src/recap_compiler/llm_proposer.py` | `tests/test_llm_proposer.py` (9 cases) |
+| # | Stage | Status | Completed | Code | Tests |
+|---|---|---|---|---|---|
+| A | Data ingestion | **Done** | 2026-08-06 (edge_id fix 2026-08-10) | `src/recap_compiler/ingestion.py` | `tests/test_ingestion.py` (13 cases) |
+| B | Regex frontend (Thompson's construction) | **Done** | 2026-08-06 | `src/recap_compiler/regex_frontend.py` | `tests/test_regex_frontend.py` (14 cases) |
+| C | NFA -> transitions relation | **Done** | 2026-08-06 | `src/recap_compiler/transitions.py` | `tests/test_transitions.py` (6 cases) |
+| D | Selective-aggregate frontend + skeleton generation | **Done** | 2026-08-10 | `src/recap_compiler/selective_aggregate.py` | `tests/test_selective_aggregate.py` (25 cases) |
+| E | Standard ReCAP SQL generation | **Done** (unoptimized -- see notes) | 2026-08-10 | `src/recap_compiler/standard_sql.py` | `tests/test_standard_sql.py` (5 cases; `update_d` normalization covered via `test_optimizer.py`'s standard/optimized-equivalence tests) |
+| G | Execution + telemetry | **Done** (minimal telemetry) | 2026-08-10 | `src/recap_compiler/execution.py` | `tests/test_execution.py` (6 cases) |
+| F | Optimizer: dictionary flattening + function inlining | **Done** | 2026-08-10 | `src/recap_compiler/optimizer.py` | `tests/test_optimizer.py` (16 cases, incl. standard/optimized equivalence) |
+| I | Workbench orchestration | **Done** (MVP scope, now incl. factorized custom-aggregate authoring -- see notes) | 2026-08-10 | `webapp/app.py` | manual/bare-mode smoke test + a standalone script exercising the custom-aggregate code path directly (see notes); no automated UI tests |
+| Section 7 | Error taxonomy (cross-cutting) | **Scaffolded** | 2026-08-06 | `src/recap_compiler/errors.py` | exercised via A/B tests (E-INPUT, E-REGEX now; E-REF/E-TYPE/E-UNSUPPORTED/E-EXEC land with D/F/G) |
+| -- | Stage-by-stage timing breakdown (not a spec item -- diagnostic/demo tool) | **Done** | 2026-08-10 | `src/recap_compiler/profiling.py` | `tests/test_profiling.py` (6 cases) |
+| H (stretch) | Negative-stability verifier (not committed) | Not started | -- | -- | -- |
+| J (optional) | LLM-assisted selective-aggregate authoring (no longer has its own spec section) | **Done** (reintroduced 2026-08-18: hosted Claude API backend, full per-transition-pair draft scope -- see notes) | built 2026-08-11, removed 2026-08-11, reintroduced 2026-08-18 | `src/recap_compiler/llm_proposer.py` | `tests/test_llm_proposer.py` (9 cases) |
 
 ## Module J -- built, live-tested, then removed (2026-08-11)
 
-An optional LLM-assisted selective-aggregate authoring module (spec Part II,
-FR-34..43/NFR-6..9) was designed, built, and tested across most of this
+An optional LLM-assisted selective-aggregate authoring module (spec Part II)
+was designed, built, and tested across most of this
 session, then **removed entirely per explicit user decision** ("We have
 decided to remove the LLM bit"). Summary, since the detailed day-of notes
 are no longer useful once the code is gone:
@@ -625,10 +621,10 @@ are no longer useful once the code is gone:
 - **What it was:** an optional branch inside the Custom-aggregate authoring
   UI. Given a plain-English (and/or SQL-style) constraint description, a
   local model drafted the five selective-aggregate function bodies plus a
-  `negatively_stable` self-classification, reusing the existing FR-14/FR-23
+  `negatively_stable` self-classification, reusing the existing
   validation gates unchanged (no privileged path for LLM output vs.
   hand-written input).
-- **Key design revision during development:** FR-36 originally rejected
+- **Key design revision during development:** this module originally rejected
   outright any proposal where the model wasn't confident but still
   attempted a real pruning check. Changed (per explicit user framing --
   "the LLM does not need to be sure ... the user is the ultimate line of
@@ -696,8 +692,8 @@ later holds large integer values has the same latent bug.
 Fixed with `typed_init_d()` (`selective_aggregate.py`): casts each
 `init_d` field to its already-declared `DictionaryKey.sql_type` before
 Stage E pastes it into the `init_d()` macro body and before Stage F
-decomposes it into anchor columns -- same "both call sites, for FR-22
-equivalence" reasoning `normalize_update_d_body` needed, and for the same
+decomposes it into anchor columns -- same "both call sites, for
+standard/optimized equivalence" reasoning `normalize_update_d_body` needed, and for the same
 reason: an anchor typed differently between the two stages would make
 them silently disagree, not just one of them wrong. Verified against the
 real reported scenario (a BIGINT column with genuine epoch-ms values) end
@@ -719,7 +715,7 @@ by running a small query after a large one on the same connection and
 seeing the same (large) peak reported for both, even after `DROP TABLE`
 and toggling profiling off/on in between. Accurate for one fresh
 `duckdb.connect()` per measured run (true of `demo_pipeline.py` and of a
-single webapp "Compile & run" click when FR-22 comparison is off); when
+single webapp "Compile & run" click when the standard/optimized comparison is off); when
 comparing standard vs. optimized in one click, the second query's number
 includes the first's, honestly labeled as such in both the webapp caption
 and `execution.py`'s module docstring rather than silently overstating
@@ -734,10 +730,10 @@ connection too (a test, `test_a_failed_query_still_leaves_the_connection_usable`
 
 ## Next up
 
-- **`bounded_sum` library entry (FR-13 style).** A deterministic
+- **`bounded_sum` library entry (same style as the existing library entries).** A deterministic
   SUM(property) <= U aggregate, valid whenever property is known
   non-negative (mirrors `bounded_range`'s max-min pattern) -- a natural
-  fourth FR-13 library entry alongside `bounded_range`/
+  fourth library entry alongside `bounded_range`/
   `adjacent_edge_predicate`/`trail_via_edge_ids`. Not started.
 - **Non-factorized (per-transition) authoring in the UI.** User explicitly
   chose to skip this for now ("let's skip the nfa-state-dependent one") --
@@ -746,7 +742,7 @@ connection too (a test, `test_a_failed_query_still_leaves_the_connection_usable`
   smarter design (e.g. only show pairs reachable from the chosen start
   vertices, or a real code-editor widget) rather than a plain form.
 - **Vertices-file upload** (workbench currently always infers vertices from
-  edges; FR-2's explicit vertices-file path isn't wired into the UI).
+  edges; the compiler's own explicit vertices-file path isn't wired into the UI).
 - **Automated tests for `webapp/app.py`** -- see the Stage I completion note
   for why this cut has none and what a real test would need.
 
@@ -901,7 +897,7 @@ now has a well-defined meaning even with no real regex (see
   shape whether the regex is real or trivial.
 - **`execution.py` (Stage G):** untouched either way -- `run_query` only
   ever reads `.sql`/`.cte`.
-- **FR-22 still checked, not just argued, for the trivial-automaton case:**
+- **Standard/optimized equivalence still checked, not just argued, for the trivial-automaton case:**
   `test_fr22_trivial_relation_equivalence` builds both queries over
   `trivial_relation()` on a graph with mixed labels a real regex would
   have filtered, and asserts identical `(v, path_length)` result sets.
@@ -1095,8 +1091,8 @@ representation `complete_update_d_body` already produces, so a key left
 unassigned defaults to pass-through, identically to the struct-literal
 form. `standard_sql.register_aggregate_macros` (Stage E) and
 `optimizer._flatten_update_d` (Stage F) both call `normalize_update_d_body`
-now instead of `complete_update_d_body` directly -- same FR-22 reasoning
-as before: pasting `D.key = expr` verbatim into a macro would be invalid
+now instead of `complete_update_d_body` directly -- same standard/optimized-equivalence
+reasoning as before: pasting `D.key = expr` verbatim into a macro would be invalid
 SQL (a boolean comparison, not a struct), so this conversion is load-
 bearing for Stage E, not just a Stage F nicety.
 
@@ -1159,7 +1155,7 @@ aggregate with no declared keys) untouched.
 doing anything else with `update_d` -- pasting a partial struct verbatim
 into a macro (Stage E's old behavior) and completing-then-decomposing it
 (Stage F) are not the same body, and doing only one of the two would have
-silently broken FR-22 equivalence for exactly this case (the standard
+silently broken standard/optimized equivalence for exactly this case (the standard
 query's `D` would be missing a field the optimized query's flattened
 columns still tracked). Caught this while designing the fix, before
 writing any code -- worth remembering as a general rule for this codebase:
@@ -1187,7 +1183,7 @@ behavior explicitly, since the whole point was to make hand-writing
 ## Completed: factorized custom-aggregate authoring in the UI (2026-08-10)
 
 User confirmed starting with "the interactive end" (the skeleton-editing
-UI, FR-32/FR-12) before Module J, explicitly scoped to skip non-factorized
+UI) before Module J, explicitly scoped to skip non-factorized
 (NFA-state-dependent) editing for the reason above. Added a live "Aggregate
 source" radio (library vs. custom) to `webapp/app.py`'s aggregate section.
 Custom mode: an editable dictionary-keys table (`st.data_editor`, add/
@@ -1197,7 +1193,7 @@ resulting `SelectiveAggregate` feeds into the exact same, unchanged Stage
 E/F/G pipeline as a library aggregate -- no downstream code needed to
 change, which is exactly the payoff of Stage D's factorized data model
 already being a plain dataclass. Duplicate dictionary-key names are
-rejected before validation with a clear message (real FR-14 validation
+rejected before validation with a clear message (the real validation logic
 would otherwise fail confusingly on the duplicate struct key instead).
 
 **Follow-up fix, same day: the first version's defaults were actively
@@ -1209,7 +1205,7 @@ mentioned example key names `key1`/`key2` in a comment -- while the
 dictionary-keys table defaulted to a single row named `example_key`. A
 user copying the `key1` example into `update_d` got exactly the confusing
 error this predicts: `[E-REF] update_d references undeclared dictionary
-key 'D.key1'` -- correct behavior from FR-14's perspective (key1 really
+key 'D.key1'` -- correct behavior from the validator's perspective (key1 really
 wasn't declared), but a bad first experience, since nothing in the UI's
 own defaults was internally consistent enough to just run. Fixed by
 replacing the placeholder-comment approach entirely: the custom-aggregate
@@ -1223,7 +1219,7 @@ aggregate. Clicking **Compile & run** with nothing edited now works and
 returns the same result as the library `bounded_range` entry, rather than
 being guaranteed to fail. `generate_skeleton` is no longer used by the UI
 (the `-- TODO` comment style it produces is fine as a hint text artifact,
-per FR-12's own framing, but was the wrong thing to use as directly-runnable
+matching its own framing, but was the wrong thing to use as directly-runnable
 widget defaults) -- import removed accordingly. General lesson: **when a
 default value can be run as-is, it should actually run** -- placeholder
 comments invite exactly this kind of "user copies the example literally,
@@ -1273,14 +1269,14 @@ spec-independent utility (`TimingBreakdown` + a `timed_stage` context
 manager) that either caller (the demo script, the workbench) wraps around
 each pipeline step to build an ordered `[(stage_name, ms), ...]` list, with
 `.total_ms` and `.as_rows()` (adds each stage's % of total) for display.
-Deliberately kept separate from `execution.Telemetry` (FR-26, which only
+Deliberately kept separate from `execution.Telemetry` (which only
 measures the generated query's own execution) -- a query's
 `Telemetry.runtime_ms` is folded in as one line of the wider breakdown, not
 replaced by it. 6 new tests in `test_profiling.py` (76 passing total).
 
 Wired into both `demo_pipeline.py` (prints a text table at the end) and
-`webapp/app.py` (a bar chart + formatted table + total, after the FR-22
-banner). Stages measured in both: regex -> NFA (B), build transitions
+`webapp/app.py` (a bar chart + formatted table + total, after the
+standard/optimized-equivalence banner). Stages measured in both: regex -> NFA (B), build transitions
 relation (C), load graph (A), validate aggregate (D), select start
 vertices (A), materialize transitions table (C), register macros + generate
 standard SQL (E), generate optimized SQL (F), execute each query (G). In
@@ -1296,7 +1292,7 @@ every other pre-execution stage (regex parsing, transitions relation,
 validation, SQL generation) is low single-digit milliseconds or less; the
 two query executions dominate at ~900-1000ms each, ~90%+ of the total.
 This is worth stating plainly in any demo: compiling this query is
-essentially free: the two-query FR-22 comparison's cost is the recursive
+essentially free: the two-query standard/optimized comparison's cost is the recursive
 join itself, not the compiler's own overhead, which is exactly the
 contrast the paper's own "we don't extend DuckDB, the win is early
 filtering inside the query" framing would predict.
@@ -1307,21 +1303,21 @@ Built per the user's explicit request for "the actual interface," scoped
 down to what's buildable same-day (confirmed with the user before
 building): a single-page Streamlit app (`webapp/app.py`) wired directly to
 the existing A-G pipeline, not a mock. Sidebar: upload an edges CSV or fall
-back to the bundled sample dataset (FR-33 -- nothing hard-coded, the sample
+back to the bundled sample dataset (nothing hard-coded, the sample
 is only a default), with a schema probe (cached via `st.cache_data`) so the
 aggregate-parameter dropdowns are populated from the real columns. Below
 the sidebar, **outside any form**: the regex field, plus the live NFA
 summary and the actual `T(from_state, to_state, label)` transitions table
 (via `transitions.to_dataframe`) for whatever regex is currently typed.
 Then a form for the rest: start-vertex selection (explicit id or an
-out-degree band, FR-4 -- a band is capped to `DEGREE_BAND_CAP=5` vertices
+out-degree band -- a band is capped to `DEGREE_BAND_CAP=5` vertices
 so a careless pick doesn't trigger the same blowup documented below), a
-picker over the three FR-13 library aggregates with their real parameters,
+picker over the three built-in library aggregates with their real parameters,
 length bound, and a toggle to also run the unoptimized (Stage E) query for
-an FR-22 comparison. On submit: builds and runs the optimized (Stage F)
+a standard/optimized comparison. On submit: builds and runs the optimized (Stage F)
 query (and the standard one if requested), shows both SQL texts, results
 (struct columns expanded via `pd.json_normalize` for readability),
-telemetry, and a pass/fail FR-22 banner comparing `(v, q, path_length)`
+telemetry, and a pass/fail standard/optimized-equivalence banner comparing `(v, q, path_length)`
 signatures between the two. Every `RecapCompilerError` is caught and shown
 as `[CATEGORY] message (at locus)` instead of a raw traceback -- Section
 7's error taxonomy made visible in the UI, not just in tests.
@@ -1355,8 +1351,8 @@ and fixed a real correctness gap it surfaced.** User asked to stop showing
 the transitions table (can get large -- Q1's regex alone produces 103 rows)
 and instead show ~10 rows of the loaded edge data, with two requirements:
 (1) the edge table needs a reliable unique row identifier even if the
-source data doesn't have one, since FR-13(ii)'s trail semantics
-(`trail_via_edge_ids`) depend on one; (2) if a `label` column exists, show
+source data doesn't have one, since the trail-semantics library entry
+(`trail_via_edge_ids`) depends on one; (2) if a `label` column exists, show
 the distinct label values so the user has the actual alphabet in front of
 them while writing a regex.
 
@@ -1397,11 +1393,11 @@ correctly resolve to `amount, edge_id, hour_of_day, ip_prefix,
 login_frequency, risk_score, session_duration, timestamp_ms`; text columns
 (`age_group, anomaly, location_region, purchase_pattern`) correctly
 excluded. As the user noted themselves, the real long-term fix is the
-full FR-32 skeleton editor (any column, any expression, author's
+full skeleton editor (any column, any expression, author's
 responsibility) -- this is a stopgap for the pre-built-library-only MVP.
 
 **Explicitly out of scope for this cut, not silently dropped:** in-browser
-`CASE`-skeleton editing (FR-12's full authoring flow -- this cut only
+`CASE`-skeleton editing (the full skeleton-authoring flow -- this cut only
 exposes the three pre-written library aggregates), the negative-stability
 check (Section 13, itself still a stretch objective) and the LLM proposer
 (Module J, still unbuilt) both have no UI hook since neither exists yet,
@@ -1425,7 +1421,7 @@ tool becomes available, use it here before trusting this UI further.
 
 ## Completed: F (2026-08-10) -- optimizer, and a real, verified finding about *why* it helps
 
-FR-22 (semantics-preserving) is checked directly, not just argued: eleven
+Semantics-preservation is checked directly, not just argued: eleven
 tests in `tests/test_optimizer.py` build both the standard (Stage E) and
 optimized (Stage F) query for the same aggregate/relation/inputs and assert
 identical `(v, q, path_length)` result sets, across several length bounds,
@@ -1443,28 +1439,28 @@ scalar SQL macros at bind time, before physical planning -- there is no
 per-call dispatch cost to remove in the first place. The real (smaller, but
 genuine) win is that reading a native flattened column (`p.max_amount`) is
 cheaper than extracting a field out of a struct-typed column
-(`p.D.max_amount`) on every one of the ~1.4M intermediate rows -- FR-19's
-actual justification is avoiding *struct-access* overhead, not avoiding
+(`p.D.max_amount`) on every one of the ~1.4M intermediate rows -- dictionary
+flattening's actual justification is avoiding *struct-access* overhead, not avoiding
 function-call overhead. This would likely matter much more for a `D`
-represented as JSON (FR-18's literal default) rather than a native DuckDB
+represented as JSON (the un-flattened default) rather than a native DuckDB
 struct, since JSON field extraction is markedly more expensive than struct
 field access -- not verified here, since Stage E already uses a struct;
 worth checking if this ever gets revisited. **Corrected the two places
 below and in `demo_pipeline.py` that had the wrong (unverified) claim.**
 
-- `src/recap_compiler/optimizer.py` -- `_decompose_struct` (FR-19: splits a
+- `src/recap_compiler/optimizer.py` -- `_decompose_struct` (splits a
   Stage D struct-literal body into one raw expression per key -- this *is*
   the flattening, made easy by Stage D's own struct-literal convention),
-  `_rewrite_node`/`_rewrite_sql` (FR-20: `D.<key>`/bare `D`/`from_state`/
+  `_rewrite_node`/`_rewrite_sql` (`D.<key>`/bare `D`/`from_state`/
   `to_state` -> real column refs, via the same `sqlglot` AST approach as
-  Stage D's validator), `_flatten_update_d`/`_flatten_is_viable_d` (FR-21:
-  `CASE` over transition pairs when non-factorized), `build_optimized_query`
+  Stage D's validator), `_flatten_update_d`/`_flatten_is_viable_d` (function
+  inlining: `CASE` over transition pairs when non-factorized), `build_optimized_query`
   (same shape as Stage E's `build_standard_query`, no macros, no `D` struct
   column internally). `OptimizedQuery` exposes the same `.sql`/`.cte` shape
   as `StandardQuery`, so `execution.run_query` accepts either unchanged.
 - `demo_pipeline.py` now builds and runs *both* the standard and optimized
   query on the same connection, asserts their `(v, q, path_length)` result
-  sets match (a live FR-22 check, not just a claim), and prints the timing
+  sets match (a live equivalence check, not just a claim), and prints the timing
   comparison above.
 
 ## Completed: D, E, G (2026-08-10) -- the mini end-to-end demo works
@@ -1484,13 +1480,14 @@ which is also why Stage D's identifier convention changed from bare
 access, not a bare identifier Stage E would otherwise have to rewrite).
 
 - `src/recap_compiler/selective_aggregate.py` (Stage D, convention updated) --
-  `SelectiveAggregate`/`DictionaryKey`, `generate_skeleton` (FR-12),
-  `validate_selective_aggregate` (FR-14), three FR-13 library entries.
+  `SelectiveAggregate`/`DictionaryKey`, `generate_skeleton`,
+  `validate_selective_aggregate`, three library entries.
 - `src/recap_compiler/standard_sql.py` (Stage E) -- `register_aggregate_macros`,
-  `materialize_transitions`, `build_standard_query` (FR-15..18; FR-16's
-  anchor-seeding fix for R4.O3 is a `VALUES` relation, not a free variable).
-- `src/recap_compiler/execution.py` (Stage G) -- `run_query` (FR-24: paths/
-  endpoints/count shapes; FR-25: `.sql` on the result; FR-26: wall-clock +
+  `materialize_transitions`, `build_standard_query` (the anchor is seeded via a
+  `VALUES` relation rather than a free variable, so the base case has no
+  undefined columns).
+- `src/recap_compiler/execution.py` (Stage G) -- `run_query` (paths/
+  endpoints/count shapes; `.sql` on the result; wall-clock +
   intermediate-paths-explored telemetry, via a separate `paths`-CTE-only
   count query since the final query's row count isn't the same number --
   see the module docstring).
@@ -1518,7 +1515,7 @@ access, not a bare identifier Stage E would otherwise have to rewrite).
   top-level alternation (e.g. `(transfer|purchase|sale)+ ...`, which is
   exactly Q1's real query) produces several epsilon-reachable start states
   after epsilon-removal. `transitions.py` (Stage C) synthesizes a single q0
-  by unioning their outgoing transitions, per FR-9/FR-10 -- this is required,
+  by unioning their outgoing transitions -- this is required,
   not optional, for the SQL template (Stage E) to have a single seed row.
 - **Stage D's identifier convention, v2 (changed 2026-08-10 for Stage E):**
   every function body is one SQL expression; `D.<key>` is real DuckDB struct
@@ -1533,7 +1530,7 @@ access, not a bare identifier Stage E would otherwise have to rewrite).
   real SQL against those parameter names -- no compiler-side rewrite step.
   `init_d()` takes no parameters at all, so nothing (not even `D`) is in
   scope inside it -- `_validate_init_d` rejects any reference. `sqlglot`'s
-  AST still does all the FR-14 checking (`Column` nodes with
+  AST still does all the reference-validation checking (`Column` nodes with
   `table=='D'`/`table=='e'`/bare); the struct-literal `{key: val}` syntax
   for constructing `D` still parses its keys as `Identifier`, not `Column`,
   so init_d/update_d bodies that *build* D are unaffected by this change --
@@ -1586,20 +1583,20 @@ prototype, Kùzu, and a plain-DuckDB baseline on the same Q1 query).**
   ReCAP-new reported 63/262/733 -- the existing 117-test suite never
   exercised this NFA shape. Fixed with one line: `rows =
   list(dict.fromkeys(rows))` before returning `TransitionsRelation`
-  (dedupes, preserves NFR-1 determinism).
+  (dedupes, preserves determinism).
 - **`execution.py`'s `Telemetry.runtime_ms` silently included a second
-  query execution.** Computing `intermediate_paths` (FR-26) re-runs the
+  query execution.** Computing `intermediate_paths` re-runs the
   whole recursive CTE a second time; the old code folded that second
   execution's time into the same `runtime_ms` reported as "how long did
   the query take," roughly doubling every reported number. Fixed by
   adding `Telemetry.intermediate_count_ms` as a separate field;
   `runtime_ms` now times only the main query. `demo_pipeline.py` and
   `webapp/app.py` both updated to show the recount time separately.
-- **Stage B now supports opt-in NFA minimization, per FR-7's explicit
-  carve-out.** `compile_regex_to_nfa(pattern, *, minimize=False)` --
-  default unchanged (FR-7 requires non-minimization to stay the default,
+- **Stage B now supports opt-in NFA minimization.**
+  `compile_regex_to_nfa(pattern, *, minimize=False)` --
+  default unchanged (non-minimization stays the default,
   since preserving the raw NFA is what keeps ReCAP compatible with
-  wavefront/segment-style planners, R4.O2), but `minimize=True` is now
+  wavefront/segment-style planners), but `minimize=True` is now
   available for callers (like a benchmark) that only care about standard
   bottom-up evaluation. pyformlang's `.minimize()` determinizes
   internally (no separate `.to_deterministic()` needed) and, for Q1's own

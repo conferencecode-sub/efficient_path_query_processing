@@ -37,8 +37,8 @@ def _run(conn, aggregate, *, start_vertices, length_bound):
 
 
 def test_anchor_seeds_every_start_vertex_with_no_undefined_columns(conn):
-    """FR-16: the anchor is well-formed for every seed, not just one -- this
-    is the defect class R4.O3 flagged (an unbound `s` in the base case)."""
+    """The anchor is well-formed for every seed, not just one -- guards
+    against an unbound `s` in the base case."""
     aggregate = SelectiveAggregate(
         dictionary_keys=(), init_d="NULL", update_d="D", is_viable_d="TRUE",
         is_viable_d_final="TRUE", finalize_d="D", factorized=True,

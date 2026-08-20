@@ -1,11 +1,11 @@
-"""Stage D: selective-aggregate frontend + skeleton generation (FR-11..FR-14).
+"""Stage D: selective-aggregate frontend + skeleton generation.
 
 A selective aggregate (Definition 8) is up to five SQL expression bodies over
 a dictionary `D`: `init_d()`, `update_d(D, from_state, to_state, e)`,
 `is_viable_d(D, from_state, to_state, e)`, `is_viable_d_final(D)`,
 `finalize_d(D)`. `D` is represented as a DuckDB struct literal keyed by the
 declared dictionary keys (e.g. `{max_amt: ..., min_amt: ...}`), matching the
-default JSON-column representation of FR-18 -- Stage F (not yet built) is
+default JSON-column representation used before flattening -- Stage F is
 what flattens each key into its own column.
 
 Every body is written as **literal SQL against Definition 8's own parameter
@@ -26,8 +26,7 @@ valid inside `CREATE MACRO update_d(D, from_state, to_state, e) AS <body>`:
 
 `update_d`/`is_viable_d` are each either a single body (`factorized=True`)
 or a dict keyed by the exact `(from_state, to_state)` pairs of a
-`TransitionsRelation` (`factorized=False`), one branch per transition, per
-FR-12.
+`TransitionsRelation` (`factorized=False`), one branch per transition.
 """
 from __future__ import annotations
 
@@ -49,7 +48,7 @@ EDGE_ALIAS = "e"
 
 @dataclass(frozen=True)
 class DictionaryKey:
-    """One key of the selective aggregate's dictionary D (FR-14a)."""
+    """One key of the selective aggregate's dictionary D."""
 
     name: str
     sql_type: str
@@ -57,7 +56,7 @@ class DictionaryKey:
 
 @dataclass(frozen=True)
 class SelectiveAggregate:
-    """A query author's (or library entry's) selective aggregate (FR-11)."""
+    """A query author's (or library entry's) selective aggregate."""
 
     dictionary_keys: tuple[DictionaryKey, ...]
     init_d: str
@@ -70,7 +69,7 @@ class SelectiveAggregate:
 
 @dataclass(frozen=True)
 class Skeleton:
-    """FR-12: the CASE-statement skeleton for a non-factorized aggregate, or
+    """The CASE-statement skeleton for a non-factorized aggregate, or
     the single-body placeholder for a factorized one, over the transitions
     relation's actual `(from_state, to_state)` pairs."""
 
@@ -81,7 +80,7 @@ class Skeleton:
 
 
 def generate_skeleton(relation: TransitionsRelation, *, factorized: bool) -> Skeleton:
-    """FR-12. For a factorized aggregate the author supplies one unconditional
+    """For a factorized aggregate the author supplies one unconditional
     body each for `update_d`/`is_viable_d`, so no CASE is generated. For a
     non-factorized aggregate, a `CASE` skeleton is generated over every
     distinct `(from_state, to_state)` pair actually present in `relation`,
@@ -119,8 +118,8 @@ def complete_update_d_body(body: str, *, declared_keys: list[str]) -> str:
     Both Stage E (`standard_sql.register_aggregate_macros`) and Stage F
     (`optimizer._flatten_update_d`) call this **before** doing anything
     else with `update_d`, so a partial body behaves identically whether
-    pasted verbatim as a macro or flattened/inlined -- FR-22 equivalence
-    would otherwise silently break for exactly this case, since leaving a
+    pasted verbatim as a macro or flattened/inlined -- standard-vs-optimized
+    equivalence would otherwise silently break for exactly this case, since leaving a
     struct partial and completing it are not the same body to paste versus
     to decompose.
 
@@ -218,7 +217,7 @@ def normalize_update_d_body(body: str, *, declared_keys: list[str]) -> str:
     (`optimizer._flatten_update_d`) call this instead of
     `complete_update_d_body` directly, so both accepted forms normalize to
     the same thing before either stage does anything else with `update_d`
-    -- same FR-22 reasoning as `complete_update_d_body` itself: pasting an
+    -- same equivalence reasoning as `complete_update_d_body` itself: pasting an
     assignment-statement body verbatim as a macro would be invalid SQL
     (`D.key = expr` is a boolean comparison, not a struct), so this
     conversion isn't optional plumbing, it's what makes the second form
@@ -295,7 +294,7 @@ def typed_init_d(aggregate: SelectiveAggregate) -> str:
     user hit via the workbench). Casting to the already-declared type is
     exactly what that metadata is for; both Stage E (macro body) and Stage F
     (anchor columns) must use this rather than the raw `init_d`, for the
-    same FR-22-equivalence reason `normalize_update_d_body` needs both call
+    same equivalence reason `normalize_update_d_body` needs both call
     sites: an inconsistently-typed anchor would make the two stages
     disagree, not just one of them wrong."""
     if not aggregate.dictionary_keys:
@@ -329,7 +328,7 @@ def _referenced_columns(body: str, *, function_name: str, locus: str) -> list[ex
 
 
 def _validate_init_d(body: str) -> None:
-    """FR-14 for init_d(): it takes no parameters, so no column reference of
+    """For init_d(): it takes no parameters, so no column reference of
     any kind is in scope."""
     for column in _referenced_columns(body, function_name="init_d", locus="init_d"):
         raise RefError(
@@ -338,7 +337,7 @@ def _validate_init_d(body: str) -> None:
 
 
 def _validate_dict_only_body(body: str, *, function_name: str, declared_keys: set[str]) -> None:
-    """FR-14 for is_viable_d_final(D)/finalize_d(D): the only allowed
+    """For is_viable_d_final(D)/finalize_d(D): the only allowed
     references are `D` itself (the whole dictionary) or `D.<key>` for a
     declared dictionary key."""
     for column in _referenced_columns(body, function_name=function_name, locus=function_name):
@@ -363,7 +362,7 @@ def _validate_dict_only_body(body: str, *, function_name: str, declared_keys: se
 def _validate_transition_body(body: str, *, function_name: str, declared_keys: set[str],
                                edge_columns: set[str], factorized: bool,
                                locus_suffix: str = "") -> None:
-    """FR-14 for update_d/is_viable_d: `D.<key>` for a declared dictionary
+    """For update_d/is_viable_d: `D.<key>` for a declared dictionary
     key, `e.<column>` for a real edge column, or (only when non-factorized)
     bare from_state/to_state."""
     locus = f"{function_name}{locus_suffix}"
@@ -404,7 +403,7 @@ def _validate_transition_body(body: str, *, function_name: str, declared_keys: s
 def validate_selective_aggregate(aggregate: SelectiveAggregate, *,
                                   edge_columns: set[str],
                                   transitions: TransitionsRelation | None = None) -> None:
-    """FR-14: validates every function body references only declared
+    """Validates every function body references only declared
     dictionary keys, real edge-schema columns, or (for a non-factorized
     update_d/is_viable_d) the NFA state variables. Raises RefError naming
     the offending identifier and function on the first violation found."""
@@ -445,10 +444,10 @@ def validate_selective_aggregate(aggregate: SelectiveAggregate, *,
                     edge_columns=edge_columns, factorized=False, locus_suffix=f"[{pair}]")
 
 
-# --- FR-13: library of pre-written selective aggregates -------------------
+# --- Library of pre-written selective aggregates ---------------------------
 
 def adjacent_edge_predicate(*, property: str, comparator: str = ">=") -> SelectiveAggregate:
-    """FR-13(i) / Example 7: an adjacent-edge predicate on a maintained last
+    """Example 7: an adjacent-edge predicate on a maintained last
     value, e.g. non-decreasing timestamps between consecutive edges
     (`comparator=">="`). Negatively stable because the predicate is checked
     on every hop and never re-examines an earlier edge."""
@@ -463,7 +462,7 @@ def adjacent_edge_predicate(*, property: str, comparator: str = ">=") -> Selecti
 
 
 def trail_via_edge_ids(*, id_column: str = "id") -> SelectiveAggregate:
-    """FR-13(ii) / Example 8: trail semantics via a maintained edge-id set --
+    """Example 8: trail semantics via a maintained edge-id set --
     a path may not reuse an edge it has already traversed. Negatively stable
     because a repeated edge id can never become un-repeated by extension."""
     return SelectiveAggregate(
@@ -476,7 +475,7 @@ def trail_via_edge_ids(*, id_column: str = "id") -> SelectiveAggregate:
 
 
 def bounded_range(*, property: str, upper_bound: float) -> SelectiveAggregate:
-    """FR-13(iii) / Example 9: a bounded monotone/distributive aggregate,
+    """Example 9: a bounded monotone/distributive aggregate,
     max(property) - min(property) <= U. Negatively stable because max-min is
     monotonically non-decreasing under extension, so once it exceeds U no
     extension can bring it back down."""
@@ -502,8 +501,8 @@ def _struct_literal_body(body: str, *, function_name: str) -> str:
 
 
 def combine_library_aggregates(*aggregates: SelectiveAggregate) -> SelectiveAggregate:
-    """FR-34: combine two or more **factorized** selective aggregates (e.g.
-    two FR-13 library entries, such as `bounded_range(...)` and
+    """Combine two or more **factorized** selective aggregates (e.g.
+    two library entries, such as `bounded_range(...)` and
     `trail_via_edge_ids()`) into one, for a single query that needs several
     negatively-stable constraints simultaneously.
 

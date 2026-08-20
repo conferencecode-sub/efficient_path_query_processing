@@ -32,7 +32,7 @@ def test_paths_shape_returns_full_rows_with_finalize_d_result(query_and_conn):
     result = run_query(conn, query, result_shape="paths")
     assert result.columns == ["v", "q", "D", "path_length", "result"]
     assert {row[0] for row in result.rows} == {1, 2, 3}
-    assert result.sql == query.sql  # FR-25: the exact SQL that ran is exposed
+    assert result.sql == query.sql  # the exact SQL that ran is exposed
 
 
 def test_endpoints_shape_deduplicates_reached_vertices(query_and_conn):
@@ -58,8 +58,8 @@ def test_telemetry_reports_positive_runtime():
 def test_intermediate_paths_counts_rows_the_outer_filter_later_drops():
     # A non-accepting anchor state (q0=0, Q_F={1}) means the anchor row
     # itself is a real intermediate path that never appears in the final,
-    # outer-filtered result -- this is exactly what FR-26's telemetry is
-    # supposed to surface, and it isn't recoverable by just counting the
+    # outer-filtered result -- this is exactly what the intermediate-paths
+    # telemetry is supposed to surface, and it isn't recoverable by just counting the
     # final result set.
     query, conn = _two_state_query()
     result = run_query(conn, query, result_shape="paths")

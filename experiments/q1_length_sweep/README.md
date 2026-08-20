@@ -118,12 +118,12 @@ python3 kuzu_run.py --nodes ../../ReCAP/simple_dataset/LG_V.csv \
    a separate `Telemetry.intermediate_count_ms` field; `runtime_ms` now
    times only the main query. `demo_pipeline.py` and the webapp both
    updated to show the recount time separately instead of silently.
-4. **Stage B's regex compiler never minimized the NFA, even though FR-7
-   explicitly allows it as an opt-in.** `compile_regex_to_nfa` now takes
-   `minimize: bool = False` -- default unchanged (FR-7 requires
-   non-minimization to stay the default, since preserving the raw NFA is
-   what keeps ReCAP compatible with wavefront/segment-style planners,
-   R4.O2), but this pilot passes `minimize=True` since it's only measuring
+4. **Stage B's regex compiler never minimized the NFA, even though it's
+   safe as an opt-in.** `compile_regex_to_nfa` now takes
+   `minimize: bool = False` -- default unchanged (non-minimization stays
+   the default, since preserving the raw NFA is what keeps ReCAP compatible
+   with wavefront/segment-style planners), but this pilot passes
+   `minimize=True` since it's only measuring
    standard bottom-up evaluation. Confirmed via `nfa.is_equivalent_to(...)`
    that minimizing doesn't change the language, and for Q1's own regex it
    collapses the automaton from 36 states/98 transitions down to exactly
@@ -180,8 +180,8 @@ original single-connection version made them.
 | 8 | 840 | 251.4ms | 622MB | 146.7ms | 632MB |
 | 10 | 878 | 336.2ms | 660MB | 164.9ms | 534MB |
 
-Full data in `results/new_compiler_q1.csv`. FR-22 verified exactly equal
-at every ℓ. Optimized is consistently ~1.4-2x faster than Standard here --
+Full data in `results/new_compiler_q1.csv`. Standard and optimized verified
+to produce exactly equal results at every ℓ. Optimized is consistently ~1.4-2x faster than Standard here --
 **far short of the paper's own 152x/346x for this same optimization**,
 because the new compiler's "Standard" (Stage E, DuckDB SQL macros) has
 nowhere near the overhead of the paper's actual Standard implementation

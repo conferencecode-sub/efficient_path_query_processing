@@ -1,8 +1,8 @@
 # E4 — Isolating automata exploration from property early-filtering (2026-08-14)
 
 Per `experiments/new_experiments_checklist/recap_experiments_requirements.md`'s
-E4 (R3.O1, insisted-on: separate the NFA-as-a-join contribution from ReCAP's
-property early-filtering). **Q1 only**, decided with the user during planning:
+E4: separate the NFA-as-a-join contribution from ReCAP's
+property early-filtering. **Q1 only**, decided with the user during planning:
 the doc pairs this with Q3, but Q3 has no regex (trivial one-state automaton),
 so there's nothing automata-related to isolate there — only Q1 has both a
 real regex and per-hop property constraints. Real Metaverse data

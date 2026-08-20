@@ -5,7 +5,7 @@ checks -- there's no existing compiler-side Q2 entry).
 
 Q2 has no label regex at all (every edge in `ReCAP/simple_dataset/edges.csv`
 has the same trivial label) -- it's a plain traversal with two constraints:
-  - trail: no edge id reused (FR-13(ii)'s own `trail_via_edge_ids` shape).
+  - trail: no edge id reused (the library's own `trail_via_edge_ids` shape).
   - "two-color": the path must contain at least one pair of *consecutive*
     edges sharing the same color. Unlike Q1's constraints, this is not a
     per-hop veto (a path missing the property so far isn't doomed -- a

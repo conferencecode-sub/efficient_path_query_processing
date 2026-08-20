@@ -122,7 +122,7 @@ FULL_SIGNATURE_VERIFY_MAX_LENGTH = 3  # see q2_length_sweep's own runner for why
                                        # count-only equivalence is used instead.
 
 
-def _verify_fr22(length, macro_mode="sql") -> int:
+def _verify_equivalence(length, macro_mode="sql") -> int:
     conn, standard_query, optimized_query = _setup(length, macro_mode=macro_mode)
     if length <= FULL_SIGNATURE_VERIFY_MAX_LENGTH:
         verify_standard = run_query(conn, standard_query, result_shape="paths")
@@ -130,13 +130,13 @@ def _verify_fr22(length, macro_mode="sql") -> int:
         standard_signature = {(v, q, path_length) for v, q, _d, path_length, _r in verify_standard.rows}
         optimized_signature = {(v, q, path_length) for v, q, _d, path_length, _r in verify_optimized.rows}
         assert standard_signature == optimized_signature, \
-            f"FR-22 violated at length_bound={length} macro_mode={macro_mode}!"
+            f"standard/optimized equivalence violated at length_bound={length} macro_mode={macro_mode}!"
         path_count = len(verify_standard.rows)
     else:
         verify_standard = run_query(conn, standard_query, result_shape="count")
         verify_optimized = run_query(conn, optimized_query, result_shape="count")
         assert verify_standard.rows[0][0] == verify_optimized.rows[0][0], \
-            f"FR-22 (count) violated at length_bound={length} macro_mode={macro_mode}!"
+            f"standard/optimized count equivalence violated at length_bound={length} macro_mode={macro_mode}!"
         path_count = verify_standard.rows[0][0]
     conn.close()
     return path_count
@@ -197,8 +197,8 @@ def main() -> None:
     udf_rows = []
     for length in LENGTHS:
         t0 = time.time()
-        path_count = _verify_fr22(length, macro_mode="sql")
-        udf_path_count = _verify_fr22(length, macro_mode="python-udf")
+        path_count = _verify_equivalence(length, macro_mode="sql")
+        udf_path_count = _verify_equivalence(length, macro_mode="python-udf")
         assert path_count == udf_path_count, \
             f"python-udf standard disagrees with sql-macro standard at length_bound={length}!"
         for variant, macro_mode in (("standard", "sql"), ("standard", "python-udf"), ("optimized", "sql")):
@@ -226,7 +226,7 @@ def main() -> None:
                   f"buffer_mem={row['peak_buffer_memory_mb']:.1f}MB, "
                   f"rss={row['peak_rss_mb']:.1f}MB")
         elapsed = time.time() - t0
-        print(f"  (length_bound={length} done in {elapsed:.1f}s wall, {path_count} paths verified FR-22)")
+        print(f"  (length_bound={length} done in {elapsed:.1f}s wall, {path_count} paths verified equivalent)")
 
     os.makedirs(os.path.dirname(CSV_PATH), exist_ok=True)
     with open(CSV_PATH, "w", newline="") as fh:

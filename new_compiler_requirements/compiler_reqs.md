@@ -1,6 +1,6 @@
 # ReCAP Compiler — Functional Requirements Specification
 
-**Document status:** Draft for the SIGMOD 2027 Round-2 revision. Functional requirements only; no implementation. "Mechanization notes" indicate where an existing library can discharge a non-novel step versus where custom code is required.
+**Document status:** Internal functional-requirements spec for the ReCAP compiler. Functional requirements only; no implementation. "Mechanization notes" indicate where an existing library can discharge a non-novel step versus where custom code is required.
 
 **Reconciliation note (2026-08-10):** a second draft, `recap_compiler_requirements_FULL.md`, was briefly circulated alongside this file and has since been deleted (it was never committed, so nothing was lost). Its Part I differed from this document only in un-demoting the negative-stability verifier (Module H) out of Section 13 back into the committed spec; that change was **not** adopted — Section 13 below (verifier as a stretch objective, SMT work deferred) remains the source of truth. Its **Part II — LLM-Assisted Selective-Aggregate Authoring (Module J)** was adopted, built, and live-tested as this document's own Part II, but has since been **removed** (2026-08-11, per explicit decision) along with its implementation — see the compiler's `CHECKLIST.md` for that history. This document no longer has a Part II; the compiler is Part I only.
 
@@ -10,7 +10,7 @@
 
 The ReCAP compiler takes a path query — a label regex plus a selective aggregate over edge/vertex properties — together with a property graph, and produces an **executable, optimized recursive SQL query** that performs early filtering during path exploration, executes it on a relational engine (DuckDB as the reference target), and returns results.
 
-This specification exists to close the gap the Round-2 reviews identified. R2 read the artifact as a "hard-coded prototype" that bakes in the four benchmark queries (R2.O1) and questioned whether the approach is genuinely automatable (R2.O3, R5.O3). The meta-review's crux (3) is "how versatile the compiler is to generate the approach automatically across many query shapes." The requirements below define a general, query-agnostic compiler whose behaviour is fully determined by its inputs, so that the generality claimed in the paper (Theorem 5.1, Listing 3) is realized in the artifact rather than asserted. A traceability matrix (Section 11) maps each requirement to the reviewer concern it serves.
+This specification exists to ensure the compiler is a genuine, general artifact rather than a prototype that bakes in specific benchmark queries. The requirements below define a general, query-agnostic compiler whose behaviour is fully determined by its inputs, so that the generality claimed in the paper (Theorem 5.1, Listing 3) is realized in the artifact rather than asserted.
 
 **In scope:** ingestion of arbitrary graph data; full regex support via Thompson's construction; generation of the standard ReCAP SQL (Listing 3); the optimization layer (dictionary flattening and function inlining, Section 6, previously "left for future work"); execution and result/telemetry reporting. A proof-of-concept negative-stability verifier is retained as a **stretch objective** (Section 13) rather than a committed requirement for this revision.
 
@@ -59,7 +59,7 @@ aggregate (SQL)  │ D. Sel-agg  │
                  └─────────────┘   └──────────────┘
 ```
 
-Every stage's output is inspectable; the generated SQL is a first-class artifact (FR-25), which is the concrete rebuttal to R2.O1. A negative-stability verifier (Section 13, FR-27..FR-31) is an optional stretch stage that could sit between D and E; it is not part of the committed pipeline for this revision.
+Every stage's output is inspectable; the generated SQL is a first-class artifact (FR-25), which is what makes the compiler's generality checkable rather than asserted. A negative-stability verifier (Section 13, FR-27..FR-31) is an optional stretch stage that could sit between D and E; it is not part of the committed pipeline for this revision.
 
 ---
 
@@ -67,7 +67,7 @@ Every stage's output is inspectable; the generated SQL is a first-class artifact
 
 ### A. Data ingestion
 
-**FR-1.** The system shall load a graph from a user-selected edges file. The required edge schema is `src`, `dst`, `label`; all remaining columns are treated as edge properties addressable by name in the selective aggregate (e.g. `amount`, `time`).
+**FR-1.** The system shall load a graph from a user-selected edges file, from a small bundled sample up to large real-world datasets, without code changes. The required edge schema is `src`, `dst`, `label`; all remaining columns are treated as edge properties addressable by name in the selective aggregate (e.g. `amount`, `time`).
 
 **FR-2.** The system shall optionally load a vertices file with a required `id` column; remaining columns are vertex properties. When absent, vertices are inferred from the `src`/`dst` columns of the edges.
 
@@ -79,15 +79,15 @@ Every stage's output is inspectable; the generated SQL is a first-class artifact
 
 ### B. Regex frontend (Thompson's construction)
 
-**FR-5.** The system shall accept a regular expression over the edge-label alphabet supporting, at minimum, concatenation, union (`|`), Kleene star (`*`), Kleene plus (`+`), optional (`?`), and bounded repetition (`{m,n}`). This satisfies the paper's "any regex" claim and removes the artifact limitation both R3 and R5 flagged.
+**FR-5.** The system shall accept a regular expression over the edge-label alphabet supporting, at minimum, concatenation, union (`|`), Kleene star (`*`), Kleene plus (`+`), optional (`?`), and bounded repetition (`{m,n}`). This satisfies the paper's "any regex" claim rather than supporting only a narrow, hand-picked subset of regex operators.
 
 **FR-6.** The system shall construct an ε-NFA from the regex via Thompson's construction, eliminate ε-transitions to yield an NFA, and expose the resulting states, initial state, and accepting-state set.
 
-**FR-7.** The system shall not require determinization. The NFA (non-deterministic, ε-free) is retained deliberately, because non-determinism is handled natively by the recursive join (multiple transition rows join a path/edge pair) and because preserving the NFA is what keeps ReCAP compatible with wavefront-style planners (R4.O2). Determinization/minimization may be offered as an optional pass but shall not be the default.
+**FR-7.** The system shall not require determinization. The NFA (non-deterministic, ε-free) is retained deliberately, because non-determinism is handled natively by the recursive join (multiple transition rows join a path/edge pair) and because preserving the NFA is what keeps ReCAP compatible with wavefront-style planners. Determinization/minimization may be offered as an optional pass but shall not be the default.
 
 **FR-8.** The system shall reject malformed regex with a precise diagnostic (offending position and expected token) rather than a stack trace (see Section 7).
 
-> *Mechanization:* regex → ε-NFA → ε-removal is fully standard. Recommended: `pyformlang` (`Regex.to_epsilon_nfa()`, `.remove_epsilon()`, `.to_deterministic()`), which is designed for formal-language objects and exposes states/transitions directly. Alternatives: `automata-lib`, or the Rust `regex-automata` crate if a non-Python core is preferred. Implementing Thompson's directly is ~100 lines and acceptable, but a library removes an avenue of reviewer doubt about correctness. **This step is non-novel and should be explicitly credited as such in the paper.**
+> *Mechanization:* regex → ε-NFA → ε-removal is fully standard. Recommended: `pyformlang` (`Regex.to_epsilon_nfa()`, `.remove_epsilon()`, `.to_deterministic()`), which is designed for formal-language objects and exposes states/transitions directly. Alternatives: `automata-lib`, or the Rust `regex-automata` crate if a non-Python core is preferred. Implementing Thompson's directly is ~100 lines and acceptable, but delegating to a well-tested library reduces the risk of a subtle implementation bug. **This step is non-novel and should be explicitly credited as such in the paper.**
 
 ### C. NFA → transitions relation
 
@@ -101,7 +101,7 @@ Every stage's output is inspectable; the generated SQL is a first-class artifact
 
 **FR-12.** The system shall generate a **skeleton** for `is_viable_d` and `update_d` as a `CASE` statement over the NFA's actual `(from_state, to_state)` transition pairs, so the author fills in only the transition-specific logic. For a factorized aggregate the author may supply a single unconditional body and the system shall omit the `CASE`.
 
-**FR-13.** The system shall provide a **library of pre-written selective aggregates** for the common negatively-stable patterns named in the paper: (i) adjacent-edge predicate on a maintained last value (Example 7); (ii) trail semantics via a maintained id set (Example 8); (iii) bounded monotone/distributive aggregate such as max−min ≤ U (Example 9). Library entries are parameterized by property name and threshold and are usable directly in factorized cases and as scaffolding in non-factorized ones. Multiple library entries may be combined into a single query's selective aggregate per FR-34.
+**FR-13.** The system shall provide a **library of pre-written selective aggregates** for the common negatively-stable patterns named in the paper: (i) adjacent-edge predicate on a maintained last value (Example 7); (ii) trail semantics via a maintained id set (Example 8); (iii) bounded monotone/distributive aggregate such as max−min ≤ U (Example 9). Library entries are parameterized by property name and threshold and are usable directly in factorized cases and as scaffolding in non-factorized ones, so an author reuses a tested pattern instead of hand-inlining the same logic into a bespoke CTE for every new query. Multiple library entries may be combined into a single query's selective aggregate per FR-34.
 
 **FR-14.** The system shall validate that supplied function bodies reference only (a) the dictionary keys they declare, (b) columns present in the edge/vertex schema, and (c) the NFA state variables `q`, `q'`. Unknown references shall be reported per Section 7.
 
@@ -115,7 +115,7 @@ Every stage's output is inspectable; the generated SQL is a first-class artifact
 
 **FR-15.** The system shall generate the standard ReCAP query of Listing 3: an anchor initializing `v = s`, `q = q0`, `D = init_d()`; a recursive member joining `Paths ⋈ Edges ⋈ Transitions` under `T.label = E.label AND P.q = T.from_state`, applying `is_viable_d` in the `WHERE`, and updating `D` with `update_d`; and an outer query selecting where `q ∈ Q_F AND is_viable_d_final(D)`.
 
-**FR-16.** The generated anchor shall be **well-formed with respect to the SQL recursion standard**: the start vertex shall be introduced correctly (as a literal seed row or via `FROM` over a start-vertex relation), so that the base case has no undefined columns. This directly fixes the defect R4.O3 flagged in Listings 1–2, where the base case referenced an unbound `s`.
+**FR-16.** The generated anchor shall be **well-formed with respect to the SQL recursion standard**: the start vertex shall be introduced correctly (as a literal seed row or via `FROM` over a start-vertex relation), so that the base case has no undefined columns. This directly fixes a defect in Listings 1–2, where the base case referenced an unbound `s`.
 
 **FR-17.** The system shall parameterize `s`, `q0`, `Q_F`, `ℓ`, and any threshold constants, so the same query template instantiates for any start vertex, length bound, and parameter setting without regeneration of structure.
 
@@ -141,7 +141,7 @@ Every stage's output is inspectable; the generated SQL is a first-class artifact
 
 **FR-25.** The system shall expose the generated SQL (standard and optimized) as an inspectable output artifact for every run.
 
-**FR-26.** The system shall optionally report telemetry: total intermediate paths explored, wall-clock time, and peak memory, to support R3.O3 (memory cost) and the intermediate-result comparisons of Section 7.4.
+**FR-26.** The system shall optionally report telemetry: total intermediate paths explored, wall-clock time, and peak memory, to support the intermediate-result comparisons of Section 7.4 and give a concrete memory-cost figure for the compiler's own execution.
 
 > *Mechanization:* telemetry is available from DuckDB's `EXPLAIN ANALYZE` and profiling pragmas; no custom instrumentation of the engine is required (consistent with "we did not extend DuckDB").
 
@@ -149,7 +149,7 @@ Every stage's output is inspectable; the generated SQL is a first-class artifact
 
 **FR-32.** The workbench shall drive the pipeline end to end: select data and start vertices → enter regex → system generates NFA and skeleton → author edits skeleton (or picks a library aggregate) → system generates and runs optimized SQL → results and telemetry displayed. (A negative-stability check may be added as a stretch step per Section 13.) This is revision item 6.
 
-**FR-33.** The workbench shall not hard-code any dataset, query, or example. A bundled sample dataset and example query may exist as defaults, but every input shall be replaceable through the UI without code changes. This is the direct structural answer to R2.O1.
+**FR-33.** The workbench shall not hard-code any dataset, query, or example. A bundled sample dataset and example query may exist as defaults, but every input shall be replaceable through the UI without code changes. This keeps the workbench itself from silently becoming dataset- or query-specific over time.
 
 **FR-36 (added 2026-08-17).** The regex input control shall display inline help covering, at minimum, the supported operators named in FR-5 (union `|`, concatenation, Kleene `*`/`+`, `?`, bounded repetition `{m,n}`) with a short example of each. The help shall be presented unobtrusively (e.g. a dismissible bubble or text below the input) so it does not require the author to leave the input to consult it, and shall not block entry of a regex while displayed.
 
@@ -230,7 +230,7 @@ The compiler's genuine contributions are the SQL template (E) and the two optimi
 
 *(NFR-3 and NFR-4, concerning verifier soundness and its adequacy obligation, are deferred with the verifier to Section 13 — they apply only if that stretch objective is pursued.)*
 
-**NFR-5 (no engine modification).** The system shall run on a stock DuckDB build. This is a hard requirement, both technically and rhetorically, given R2.O1.
+**NFR-5 (no engine modification).** The system shall run on a stock DuckDB build. This is a hard requirement: the compiler must not depend on any non-stock DuckDB behavior.
 
 ---
 
@@ -246,23 +246,6 @@ A passing run of stages A–G on this instantiation is the acceptance test for t
 
 ---
 
-## 11. Traceability to reviewer concerns
-
-| Requirement(s) | Serves |
-|---|---|
-| FR-32, FR-33, FR-25 | R2.O1 (artifact is a general compiler, not hard-coded; architecture explicit) |
-| FR-5..FR-8 | R3, R5 (full regex / Thompson's; removes the artifact's "simple regex only" limitation) |
-| FR-16 | R4.O3 (fixes the malformed base case in Listings 1–2) |
-| FR-7, and preserving the NFA | R4.O2 (compatibility with wavefront/segment planners) |
-| FR-24, FR-26 | R3.O3 (path return + memory cost) |
-| FR-4, FR-1 | R3.O2 (start-vertex methodology; larger-graph runs) |
-| FR-13, FR-12 | R4.O1 (abstraction/library benefit over hand-inlined CTEs) |
-| FR-35 | R4.O2 (further, UI-visible evidence of compatibility with segment/merge-style planners — authoring aid only; see Section 12 non-goal 3 and FR-7) |
-| Section 8 map | meta-crux (3) (compiler versatility across query shapes) |
-| Section 13 (stretch, if pursued) | R2.O3 / R5.O3 (how negative stability could be identified; automation boundary) — only partially served even if implemented, since it checks a supplied encoding rather than discovering one |
-
----
-
 ## 12. Explicit non-goals (scope boundary for this revision)
 
 1. **Synthesis of a selective aggregate from a raw declarative predicate** (Problem B). The compiler consumes a selective aggregate; it does not invent one from `list_max(amounts) - list_min(amounts) <= U`.
@@ -270,13 +253,13 @@ A passing run of stages A–G on this instantiation is the acceptance test for t
 3. **Cost-based, wavefront, or segment-based path planning.** The compiler targets the standard bottom-up recursive evaluation; it is designed to remain *compatible* with richer planners (FR-7) but does not implement them.
 4. **Discharging the adequacy obligation (NFR-4, Section 13).**
 
-Stating these keeps the revision's committed surface exactly equal to what the AE endorsed, and reserves 1–2 as the spine of follow-on work rather than giving it away here.
+Stating these keeps the revision's committed surface bounded and explicit, and reserves 1–2 as the spine of follow-on work rather than giving it away here.
 
 ---
 
 ## 13. Stretch objectives (not committed for this revision)
 
-The items below describe a proof-of-concept negative-stability verifier. They are **not required** for this revision to be considered complete — Sections 1, 3, and 4 describe the committed pipeline without it. They are kept here, rather than deleted, because they sketch a partial, honest answer to R2.O3/R5.O3 ("how would a system identify negatively stable constraints?") that could be picked up if time permits. Nothing in Sections 1–12 depends on this section being implemented.
+The items below describe a proof-of-concept negative-stability verifier. They are **not required** for this revision to be considered complete — Sections 1, 3, and 4 describe the committed pipeline without it. They are kept here, rather than deleted, because they sketch a partial, honest answer to an open question ("how would a system identify negatively stable constraints?") that could be picked up if time permits. Nothing in Sections 1–12 depends on this section being implemented.
 
 ### H. Negative-stability verifier (proof-of-concept module)
 
@@ -292,8 +275,8 @@ The items below describe a proof-of-concept negative-stability verifier. They ar
 
 > *Mechanization:* Z3 via its Python API. Theory selection by property type: LIA/LRA/LIRA for numeric amounts and timestamps; the array or finite-set fragment for `edge_ids` membership (trail); sequence/datatype theory only if list-shaped state is retained rather than flattened. Invariant inference (Problem B) would use CHC/Spacer or an inductive prover; that remains out of scope even if this stretch objective is pursued (Section 12).
 
-**NFR-3 (verifier soundness, stated precisely).** `PROVED` is sound: an `unsat` result establishes negative stability. `COUNTEREXAMPLE` is a witness over *all* states, including states that may be unreachable in a real path exploration; it therefore means "not provable negatively stable by the single-step method," not necessarily "observably non-stable at runtime." This caveat shall be documented so no reviewer can read a false claim of completeness into it.
+**NFR-3 (verifier soundness, stated precisely).** `PROVED` is sound: an `unsat` result establishes negative stability. `COUNTEREXAMPLE` is a witness over *all* states, including states that may be unreachable in a real path exploration; it therefore means "not provable negatively stable by the single-step method," not necessarily "observably non-stable at runtime." This caveat shall be documented so no reader can mistake this for a claim of completeness.
 
 **NFR-4 (adequacy obligation, acknowledged).** The verifier assumes the incremental triple `(S, u, ok)` faithfully computes the author's declarative predicate `φ` (i.e. `ok(fold(u, s0, xs)) = φ(xs)` for all lists). Discharging adequacy is an induction over lists and is **not** attempted by the PoC; it is stated as an assumption and flagged as future work. Naming this pre-empts the obvious "you only proved self-consistency of the incremental form" objection.
 
-**Traceability, if pursued:** this offers a partial, PoC-level answer to R2.O3 and R5.O3. It checks a *supplied* incremental encoding rather than searching for one, so it does not fully resolve the reviewers' concern, but it would materially strengthen the honesty of the revision's automation story.
+**If pursued:** this offers a partial, PoC-level answer to how negative stability could be identified. It checks a *supplied* incremental encoding rather than searching for one, so it does not fully resolve the automation question, but it would materially strengthen the honesty of the revision's automation story.

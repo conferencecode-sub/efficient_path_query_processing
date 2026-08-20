@@ -30,9 +30,9 @@ own output goes to `results/e4_isolation_reduced.csv` in this directory.
 
 Verifies configs 2 and 3 return the same final `result` at every length
 before trusting any timing number (they must, by construction -- same
-checks, just different is_viable_d/is_viable_d_final placement, an
-FR-22-style semantics-preserving equivalence) and raises loudly if they
-ever disagree, rather than silently reporting a possibly-buggy number.
+checks, just different is_viable_d/is_viable_d_final placement, a
+semantics-preserving equivalence) and raises loudly if they ever
+disagree, rather than silently reporting a possibly-buggy number.
 """
 from __future__ import annotations
 
@@ -185,7 +185,7 @@ def main() -> None:
                   f"runtime={row['runtime_ms']:.2f}ms, rss={row['peak_rss_mb']:.1f}MB "
                   f"({elapsed:.1f}s wall)")
 
-    # FR-22-style semantics-preserving equivalence check: configs 2 and 3
+    # Semantics-preserving equivalence check: configs 2 and 3
     # implement the *same* reduced constraint set, just early vs. late
     # placement -- their final result must match at every length, or one
     # of the two aggregates has a bug, not just a timing difference worth

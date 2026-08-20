@@ -114,7 +114,7 @@ def test_select_start_vertices_by_degree_band(conn, edges_csv):
 
 
 def test_select_start_vertices_defaults_to_all_distinct_src_when_none_given(conn, edges_csv):
-    # FR-4 amendment: no mode given -> every distinct src in Edges (1,2,3,4;
+    # No mode given -> every distinct src in Edges (1,2,3,4;
     # 5 never appears as a src, so it's correctly excluded).
     handle = load_graph(conn, edges_csv)
     assert select_start_vertices(handle) == [1, 2, 3, 4]

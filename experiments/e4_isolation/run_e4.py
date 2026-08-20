@@ -1,6 +1,6 @@
 """E4 (see `experiments/new_experiments_checklist/recap_experiments_requirements.md`):
 isolates the automata-exploration contribution from the property-early-
-filtering contribution, per R3.O1. Three configs on Q1 (the only query with
+filtering contribution. Three configs on Q1 (the only query with
 both a real regex and per-hop property constraints -- Q3 has no regex, see
 the planning discussion this session), same real Metaverse dataset/start
 vertex (383, high-degree, matching every other Q1 experiment) as E1/E5:
@@ -20,7 +20,7 @@ vertex (383, high-degree, matching every other Q1 experiment) as E1/E5:
    request: since this section's whole point is isolating the *maximum*
    early-filtering benefit, it should use the encoding that actually
    achieves maximal early filtering, not the one the rest of the paper
-   happens to use for other reasons (FR-12 factorized aggregates combine
+   happens to use for other reasons (factorized aggregates combine
    additively across a query; General mode is always exactly one
    aggregate, so it isn't used as the default elsewhere).
 

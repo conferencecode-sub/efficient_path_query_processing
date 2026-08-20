@@ -1,7 +1,7 @@
 """Module J (optional): LLM-assisted General (non-factorized) selective
 -aggregate authoring.
 
-A first version of this module (FR-34..43/NFR-6..9, local Ollama models)
+A first version of this module (local Ollama models)
 was built, live-tested, and then removed entirely per explicit user
 decision on 2026-08-11 -- see `CHECKLIST.md`'s "Module J -- built,
 live-tested, then removed" entry for the full history, including two real
@@ -22,8 +22,8 @@ deliberate differences, both explicit user decisions:
 Same non-negotiable safety property as the first version: **no privileged
 path for LLM output vs. hand-written input.** Whatever this module
 produces lands in the exact same text boxes/table cells a human would type
-into, and goes through the exact same FR-14/FR-23 validation and FR-22
-optimizer equivalence checks before it ever touches real data -- this
+into, and goes through the exact same reference validation and optimizer
+equivalence checks before it ever touches real data -- this
 module's only job is to produce a plausible *first draft*, not a trusted
 answer.
 

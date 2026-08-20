@@ -1,40 +1,39 @@
 # Experiment: Is ReCAP compatible with fragment-based / non-forward exploration?
 
-**Status:** design doc, not yet implemented. Written to turn the argument in
-`LLM_forth_and_back.txt` into something runnable and falsifiable.
+**Status:** design doc, not yet implemented. Written to turn an earlier
+informal brainstorming note into something runnable and falsifiable.
 
-## 1. The critique this answers
+## 1. The design question this answers
 
-Reviewer #4 (R4.O2, "Discuss limitations and possible extensions"):
+A real limitation worth addressing directly: ReCAP's incremental checks, as
+defined, only work if paths are grown incrementally from the start of the
+regex to the accepting state. Richer path-exploration strategies exist in
+the RPQ literature that grow intermediate paths in segments, using data
+statistics for cost-based optimization to decide where best to start such
+segments. Could ReCAP's approach be integrated with such strategies, or does
+its incremental-check design foreclose that?
 
-> A main limitation is that incremental checks of the intermediate paths as
-> defined only works if the paths are being grown incrementally from start of
-> the expression to accepting state... many richer evaluation strategies are
-> being explored by researchers. Path exploration for RPQs can grow
-> intermediate paths in segments, taking advantage of data statistics for
-> cost-based optimization where best to start such segments. How could the
-> authors' approach be integrated with such other optimization strategies?
-
-The author-feedback response already asserts compatibility and sketches a
+The response to this concern already asserts compatibility and sketches a
 three-way benchmark (forward ReCAP vs. hand-split-and-join vs. a
 WAVEGUIDE-style split-and-possibly-reverse planner), and `compiler_reqs.md`
-encodes the same position structurally: FR-7 keeps the NFA non-deterministic
-"because preserving the NFA is what keeps ReCAP compatible with
-wavefront-style planners," and Section 12 non-goal #3 explicitly declines to
-*implement* such a planner — compatibility is claimed, implementation is not.
-This experiment is the evidence for that compatibility claim.
+encodes the same position structurally: the compiler keeps the NFA
+non-deterministic by default "because preserving the NFA is what keeps
+ReCAP compatible with wavefront-style planners," and Section 12 non-goal #3
+explicitly declines to *implement* such a planner — compatibility is
+claimed, implementation is not. This experiment is the evidence for that
+compatibility claim.
 
 ## 2. What we're actually claiming (and what we're not)
 
-`LLM_forth_and_back.txt` talks itself from an overreach into the right-sized
-claim; that arc is the spec for this experiment, so it's worth keeping
-explicit:
+The earlier brainstorming note talks itself from an overreach into the
+right-sized claim; that arc is the spec for this experiment, so it's worth
+keeping explicit:
 
 - **Claim A (rejected as the target):** "splitting a regex into fragments and
   merging always recovers the monolithic result, under stated general
   conditions." Nobody in the splitting literature (WAVEGUIDE included) proves
-  this in general either — it isn't the bar R4.O2 sets, and we won't hold
-  ourselves to it.
+  this in general either — it isn't the bar this concern sets, and we won't
+  hold ourselves to it.
 - **Claim B (the actual target):** ReCAP does not foreclose fragment-based
   exploration. For a concrete split of a concrete query, a fragment traversed
   in either direction is itself a ReCAP (same five-function signature), and
@@ -198,8 +197,8 @@ something to expect DuckDB to discover on its own. Worth confirming with
 
 Phase 1 above never actually reverses direction — both fragments walk
 forward. It answers "does ReCAP foreclose segmentation," but not the sharper
-half of R4.O2's phrasing ("...and even reverse the matching direction").
-That needs a query with a **fixed end vertex** (Section 2 of the paper
+half of the original concern (whether the matching direction itself could be
+reversed). That needs a query with a **fixed end vertex** (Section 2 of the paper
 explicitly lists "start vertex and end vertex given" as a supported variant,
 but none of `q1/q2/q3` implement it), plus a genuinely mirrored aggregate.
 
@@ -211,28 +210,24 @@ Sketch, using a point-to-point variant of Q3 (monotonic trail, `s` to `t`):
 - **Backward fragment**, from `t`, over the *reverse* graph (`dst` as `src`):
   maintains `min_time` seen so far walking backward — this is the mirrored
   `is_viable_d`, flipping `>` to `<`, per Example 7's family (adjacent-edge
-  predicates mirror mechanically; this is the case the LLM conversation
-  flagged as the one worth checking systematically, point 11 in the
-  transcript).
+  predicates mirror mechanically; this is the case worth checking
+  systematically).
 - **Merge**, at a candidate meeting vertex `m`: `fwd.max_time < bwd.min_time`,
   plus `edge_ids` disjointness-then-union (trail semantics needs the *actual*
   sets on both sides for this — it cannot be compressed into a bounded
-  summary the way the timestamp check can; this is precisely the "not every
-  constraint splits into bounded boundary state" honesty point from the
-  transcript, point 16).
+  summary the way the timestamp check can; not every constraint splits into
+  bounded boundary state, and it's worth being honest about that).
 
 This is a heavier build (new point-to-point query variant, a reversed-edge
 table, a real two-sided merge with a stated correctness condition rather than
 a free inductive argument) and should stay a stretch item — a
-demonstration-plus-one-experiment answers O2 fully per the transcript's own
-scope-discipline conclusion (point 17); don't let this balloon into a second
-contribution.
+demonstration-plus-one-experiment answers this concern fully; don't let this
+balloon into a second contribution.
 
 ## 5. Suggested layout, when ready to implement
 
 ```
 alternative_explorations/
-├── LLM_forth_and_back.txt
 ├── navigation_style_experiment.md          (this file)
 └── navigation_experiment/
     ├── monolithic_q1.py        # thin wrapper around the existing q1 script
@@ -246,15 +241,7 @@ Phase 2 (if pursued) would get its own `reversed_q3/` sibling directory with
 its own reversed-edges table and merge script, kept separate so Phase 1's
 results aren't blocked on it.
 
-## 6. Open risk to flag before running this
-
-Same one already on record in memory from the requirements-doc review: no
-meta-review document was found to corroborate the "meta-review's crux (3)"
-quote cited in `compiler_reqs.md`. Unrelated to this experiment's validity,
-but worth resolving before either document is used to justify scope to a
-co-author or the AE.
-
-## 7. Extensions (2026-08-18): three more constraint families/regex shapes/orderings
+## 6. Extensions (2026-08-18): three more constraint families/regex shapes/orderings
 
 `navigation_experiment_v2/` (see its own `README.md` for full results)
 extends Phase 1 along axes the original pilot didn't cover: a distributive
