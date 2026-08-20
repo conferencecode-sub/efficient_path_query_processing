@@ -34,7 +34,7 @@ from recap_compiler.transitions import trivial_relation  # noqa: E402
 
 EDGES = os.path.join(os.path.dirname(__file__), "..", "datasets", "reddit", "edges.csv")
 NODES = os.path.join(os.path.dirname(__file__), "..", "datasets", "reddit", "nodes.csv")
-START_VERTEX = 31470
+START_VERTEX = 6113
 LENGTHS = (2, 3, 4, 5, 6, 7, 8, 9, 10)
 MIN_LENGTH = 2
 PER_POINT_BUDGET_S = 300

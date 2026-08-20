@@ -1,0 +1,5 @@
+engine,length,result,intermediate_paths,runtime_ms,match_early_filtered
+duckdb-baseline,2,422,1783,21.486282348632812,True
+duckdb-baseline,3,4621,107611,64.29243087768555,True
+duckdb-baseline,4,38444,5637415,1189.6958351135254,True
+duckdb-baseline,5,279035,277974425,55347.75352478027,True

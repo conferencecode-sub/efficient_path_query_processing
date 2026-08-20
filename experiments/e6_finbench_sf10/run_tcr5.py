@@ -35,10 +35,15 @@ from recap_compiler.standard_sql import materialize_transitions, register_aggreg
 # tcr5_reference before trusting it -- see run_tcr1.py for why re-deriving
 # per scale factor is necessary, not optional.
 START_VERTEX = 6597069805450
+MIN_LENGTH = 2  # TCR5's accepting state (own hop + at least one transfer) is
+                 # only reachable at path_length >= 2 anyway -- floor here so
+                 # intermediate_paths matches the competitor scripts' own
+                 # candidate-only queries apples-to-apples.
 LENGTHS = (2, 3, 4, 5, 6, 7, 8)
 TIMEOUT_S = 7200
 CSV_PATH = os.path.join(os.path.dirname(__file__), "results", "tcr5.csv")
-CSV_FIELDNAMES = ["length", "result", "reference_result", "runtime_ms", "peak_rss_mb", "error"]
+CSV_FIELDNAMES = ["length", "result", "reference_result", "runtime_ms",
+                   "intermediate_paths", "peak_rss_mb", "error"]
 
 
 def _setup(length):
@@ -75,6 +80,9 @@ def run_one(length: int) -> dict:
     poller.start()
     try:
         result = run_query(conn, query, result_shape="count")
+        intermediate = conn.execute(
+            f"WITH RECURSIVE {query.cte} SELECT count(*) FROM paths "
+            f"WHERE path_length >= {MIN_LENGTH}").fetchone()[0]
     finally:
         stop_event.set()
         poller.join(timeout=2)
@@ -85,7 +93,8 @@ def run_one(length: int) -> dict:
 
     return {
         "length": length, "result": result.rows[0][0], "reference_result": reference_result,
-        "runtime_ms": result.telemetry.runtime_ms, "peak_rss_mb": peak[0], "error": "",
+        "runtime_ms": result.telemetry.runtime_ms, "intermediate_paths": intermediate,
+        "peak_rss_mb": peak[0], "error": "",
     }
 
 
@@ -109,14 +118,16 @@ def main() -> None:
         except subprocess.TimeoutExpired:
             print(f"length={length}: TIMEOUT after {TIMEOUT_S}s -- stopping sweep")
             rows.append({"length": length, "result": "", "reference_result": "",
-                          "runtime_ms": "", "peak_rss_mb": "", "error": f"timeout after {TIMEOUT_S}s"})
+                          "runtime_ms": "", "intermediate_paths": "", "peak_rss_mb": "",
+                          "error": f"timeout after {TIMEOUT_S}s"})
             break
         if proc.returncode != 0:
             print(proc.stdout)
             print(proc.stderr, file=sys.stderr)
             print(f"length={length}: subprocess failed (exit {proc.returncode}) -- stopping sweep")
             rows.append({"length": length, "result": "", "reference_result": "",
-                          "runtime_ms": "", "peak_rss_mb": "", "error": f"exit {proc.returncode}"})
+                          "runtime_ms": "", "intermediate_paths": "", "peak_rss_mb": "",
+                          "error": f"exit {proc.returncode}"})
             break
         lines = proc.stdout.strip().splitlines()
         reader = csv.DictReader(lines)
@@ -125,11 +136,12 @@ def main() -> None:
         row["result"] = int(row["result"])
         row["reference_result"] = int(row["reference_result"])
         row["runtime_ms"] = float(row["runtime_ms"])
+        row["intermediate_paths"] = int(row["intermediate_paths"])
         row["peak_rss_mb"] = float(row["peak_rss_mb"])
         rows.append(row)
         print(f"length={length}: {row['result']} paths (matches reference: "
               f"{row['result'] == row['reference_result']}), runtime={row['runtime_ms']:.2f}ms, "
-              f"rss={row['peak_rss_mb']:.1f}MB")
+              f"intermediate={row['intermediate_paths']}, rss={row['peak_rss_mb']:.1f}MB")
 
     os.makedirs(os.path.dirname(CSV_PATH), exist_ok=True)
     with open(CSV_PATH, "w", newline="") as fh:

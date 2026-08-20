@@ -253,3 +253,26 @@ meta-review document was found in `info_background/` to corroborate the
 "meta-review's crux (3)" quote cited in `compiler_reqs.md`. Unrelated to this
 experiment's validity, but worth resolving before either document is used to
 justify scope to a co-author or the AE.
+
+## 7. Extensions (2026-08-18): three more constraint families/regex shapes/orderings
+
+`navigation_experiment_v2/` (see its own `README.md` for full results)
+extends Phase 1 along axes the original pilot didn't cover: a distributive
+constraint family (sum of weights) instead of a monotone one, a regex with
+the rare label as the *prefix* instead of the suffix, a genuine
+three-fragment/two-seam split, and -- per an explicit ask mid-build -- the
+paper's own deferred "genuine directional reversal" stretch goal (section 4
+above), actually built this time: precompute the middle fragment first,
+walk the first fragment *backward* over a reversed edge relation, walk the
+last fragment forward as usual, then merge all three.
+
+All three new experiments confirm the same compatibility (not superiority)
+claim Phase 1 already established, with zero mismatches after finding and
+fixing three real bugs along the way (an unsound recursive-term lookahead
+prune, a floating-point non-associativity artifact in the equivalence
+check, and a missing minimum-hop guard on a backward-seeded fragment's base
+case -- the same bug class as this project's own FinBench `MIN_LENGTH`
+guards). One new, sharp finding: naive-split's cost is dominated by
+whichever segment is *not* rare, so mirroring which segment is rare changes
+naive-split's tractability by orders of magnitude (72K rows at $\ell=2$ to
+210M at $\ell=4$) even though monolithic and seeded-split are unaffected.

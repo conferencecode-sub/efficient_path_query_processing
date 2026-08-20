@@ -114,7 +114,36 @@ def q_tcr8(starter, max_len):
     """
 
 
-QUERIES = {"tcr1": (q_tcr1, TCR1_START), "tcr5": (q_tcr5, TCR5_START), "tcr8": (q_tcr8, TCR8_START)}
+def q_tcr1_candidate_only(starter, max_len):
+    """Same MATCH pattern as `q_tcr1`, no property predicate -- the
+    intermediate-paths metric (matches the Q1-Q4 convention in
+    `SOA-GDBMS/bench_common.py`). Trail-disjointness is still free from
+    Cypher's own variable-length matching, same as `q_tcr1` itself."""
+    return f"""
+        MATCH p = (start:Node {{id: {starter}}})-[t:transfer*1..{max_len - 1}]->(mid:Node)-[s:signedInBy]->(medium:Node)
+        RETURN count(*) AS cnt
+    """
+
+
+def q_tcr5_candidate_only(starter, max_len):
+    return f"""
+        MATCH p = (start:Node {{id: {starter}}})-[o:own]->(acc:Node)-[t:transfer*1..{max_len - 1}]->(dst:Node)
+        RETURN count(*) AS cnt
+    """
+
+
+def q_tcr8_candidate_only(starter, max_len):
+    return f"""
+        MATCH p = (start:Node {{id: {starter}}})-[d:deposit]->(acc:Node)-[c:transfer|withdraw*1..{max_len - 1}]->(dst:Node)
+        RETURN count(*) AS cnt
+    """
+
+
+QUERIES = {
+    "tcr1": (q_tcr1, q_tcr1_candidate_only, TCR1_START),
+    "tcr5": (q_tcr5, q_tcr5_candidate_only, TCR5_START),
+    "tcr8": (q_tcr8, q_tcr8_candidate_only, TCR8_START),
+}
 
 
 def main():
@@ -128,7 +157,7 @@ def main():
         print("Loading FinBench SF1 data...")
         load_data(driver)
 
-        for qname, (qfunc, starter) in QUERIES.items():
+        for qname, (qfunc, candidate_only_func, starter) in QUERIES.items():
             rows = []
             for length in LENGTHS:
                 query = qfunc(starter, length)
@@ -138,24 +167,28 @@ def main():
                         result = session.run(query, timeout=TIMEOUT_S)
                         cnt = result.single()[0]
                     wall_ms = (time.perf_counter() - t0) * 1000
+                    with driver.session() as session:
+                        intermediate = session.run(candidate_only_func(starter, length),
+                                                     timeout=TIMEOUT_S).single()[0]
                     expected = REFERENCE[qname][length]
                     match = (cnt == expected)
                     print(f"[neo4j] {qname} len={length}: result={cnt} expected={expected} "
-                          f"match={match} time={wall_ms:.1f}ms")
+                          f"match={match} time={wall_ms:.1f}ms intermediate={intermediate}")
                     rows.append({"length": length, "result": cnt, "reference_result": expected,
-                                 "match": match, "runtime_ms": wall_ms, "error": ""})
+                                 "match": match, "runtime_ms": wall_ms,
+                                 "intermediate_paths": intermediate, "error": ""})
                     if not match:
                         print(f"  MISMATCH -- stopping {qname} sweep for investigation")
                         break
                 except Exception as exc:
                     print(f"[neo4j] {qname} len={length}: ERROR {exc}")
                     rows.append({"length": length, "result": "", "reference_result": REFERENCE[qname][length],
-                                 "match": False, "runtime_ms": "", "error": str(exc)})
+                                 "match": False, "runtime_ms": "", "intermediate_paths": "", "error": str(exc)})
                     break
             csv_path = os.path.join(RESULTS_DIR, f"neo4j_{qname}.csv")
             with open(csv_path, "w", newline="") as fh:
                 writer = csv.DictWriter(fh, fieldnames=["length", "result", "reference_result",
-                                                          "match", "runtime_ms", "error"])
+                                                          "match", "runtime_ms", "intermediate_paths", "error"])
                 writer.writeheader()
                 writer.writerows(rows)
             print(f"wrote {len(rows)} rows to {csv_path}")

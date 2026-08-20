@@ -6,6 +6,7 @@ boolean in an intermediate `WITH`, don't combine two `ALL(...)` calls with
 `AND` directly in one `WHERE`). Reference counts are read from
 `results/tcr{1,5,8}.csv` (see `run_neo4j.py`'s docstring for why).
 """
+import argparse
 import csv
 import os
 import shutil
@@ -121,43 +122,103 @@ def q_tcr8(starter, max_len):
     """
 
 
-QUERIES = {"tcr1": (q_tcr1, TCR1_START), "tcr5": (q_tcr5, TCR5_START), "tcr8": (q_tcr8, TCR8_START)}
+def q_tcr1_candidate_only(starter, max_len):
+    """Same MATCH pattern as `q_tcr1`, no property/trail predicate -- the
+    intermediate-paths metric (matches the Q1-Q4 convention in
+    `SOA-GDBMS/bench_common.py`)."""
+    return f"""
+        MATCH path = (start:Node {{id: {starter}}})-[t:transfer*1..{max_len - 1}]->(mid:Node)-[s:signedInBy]->(medium:Node)
+        RETURN COUNT(*)
+    """
+
+
+def q_tcr5_candidate_only(starter, max_len):
+    return f"""
+        MATCH path = (start:Node {{id: {starter}}})-[o:own]->(midacc:Node)-[t:transfer*1..{max_len - 1}]->(dst:Node)
+        RETURN COUNT(*)
+    """
+
+
+def q_tcr8_candidate_only(starter, max_len):
+    return f"""
+        MATCH path = (start:Node {{id: {starter}}})-[d:deposit]->(midacc:Node)-[c:transfer|withdraw*1..{max_len - 1}]->(dst:Node)
+        RETURN COUNT(*)
+    """
+
+
+QUERIES = {
+    "tcr1": (q_tcr1, q_tcr1_candidate_only, TCR1_START),
+    "tcr5": (q_tcr5, q_tcr5_candidate_only, TCR5_START),
+    "tcr8": (q_tcr8, q_tcr8_candidate_only, TCR8_START),
+}
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--query", choices=list(QUERIES) + ["all"], default="all",
+                         help="Run a single TCR query instead of all three (e.g. --query tcr1).")
+    parser.add_argument("--queries", nargs="+", choices=list(QUERIES), default=None,
+                         help="Run a specific subset of TCR queries (e.g. --queries tcr5 tcr8).")
+    parser.add_argument("--max-length", type=int, default=max(LENGTHS),
+                         help="Cap the length sweep (e.g. --max-length 5).")
+    args = parser.parse_args()
+    if args.queries is not None:
+        queries = {q: QUERIES[q] for q in args.queries}
+    else:
+        queries = QUERIES if args.query == "all" else {args.query: QUERIES[args.query]}
+    lengths = tuple(l for l in LENGTHS if l <= args.max_length)
+
     os.makedirs(RESULTS_DIR, exist_ok=True)
     print(f"Opening Kùzu database at {DB_PATH}...")
     db, conn = fresh_database()
     print("Loading FinBench SF1 data...")
     load_data(conn)
 
-    for qname, (qfunc, starter) in QUERIES.items():
+    # Warmup: the very first query on a freshly-loaded connection pays a
+    # one-time cost (query compilation, thread-pool spin-up, first page-in
+    # to Kùzu's own buffer pool) that has nothing to do with the query's
+    # actual hop count -- confirmed directly: without this, tcr1's own
+    # length=2 was slower than length=3 at every scale factor tested
+    # (SF0.1/SF1/SF10), even though length=3 does strictly more work.
+    # Run (and discard) one real query shape before the timed loop so the
+    # first *reported* number reflects steady-state performance.
+    for qname, (qfunc, candidate_only_func, starter) in queries.items():
+        # Warmup: per-query, not just once at the start -- each distinct
+        # Cypher pattern (tcr1/tcr5/tcr8) pays its own first-compilation
+        # cost, so warming up only with tcr1 left tcr5/tcr8's own length=2
+        # still cold-started. Run (and discard) each query's own shape once
+        # before its timed sweep begins.
+        print(f"Running untimed warmup query for {qname}...")
+        conn.execute(qfunc(starter, 2)).get_next()
+
         rows = []
-        for length in LENGTHS:
+        for length in lengths:
             query = qfunc(starter, length)
             t0 = time.perf_counter()
             try:
                 result = conn.execute(query)
                 cnt = result.get_next()[0]
                 wall_ms = (time.perf_counter() - t0) * 1000
+                intermediate = conn.execute(candidate_only_func(starter, length)).get_next()[0]
                 expected = REFERENCE[qname][length]
                 match = (cnt == expected)
                 print(f"[kuzu] {qname} len={length}: result={cnt} expected={expected} "
-                      f"match={match} time={wall_ms:.1f}ms", flush=True)
+                      f"match={match} time={wall_ms:.1f}ms intermediate={intermediate}", flush=True)
                 rows.append({"length": length, "result": cnt, "reference_result": expected,
-                             "match": match, "runtime_ms": wall_ms, "error": ""})
+                             "match": match, "runtime_ms": wall_ms,
+                             "intermediate_paths": intermediate, "error": ""})
                 if not match:
                     print(f"  MISMATCH -- stopping {qname} sweep for investigation")
                     break
             except Exception as exc:
                 print(f"[kuzu] {qname} len={length}: ERROR {exc}", flush=True)
                 rows.append({"length": length, "result": "", "reference_result": REFERENCE[qname][length],
-                             "match": False, "runtime_ms": "", "error": str(exc)})
+                             "match": False, "runtime_ms": "", "intermediate_paths": "", "error": str(exc)})
                 break
         csv_path = os.path.join(RESULTS_DIR, f"kuzu_{qname}.csv")
         with open(csv_path, "w", newline="") as fh:
             writer = csv.DictWriter(fh, fieldnames=["length", "result", "reference_result",
-                                                      "match", "runtime_ms", "error"])
+                                                      "match", "runtime_ms", "intermediate_paths", "error"])
             writer.writeheader()
             writer.writerows(rows)
         print(f"wrote {len(rows)} rows to {csv_path}")

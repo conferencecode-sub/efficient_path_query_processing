@@ -1,0 +1,2 @@
+start_vertex,length,mono_count,mono_ms,naive_count,naive_ms,naive_f1_ms,naive_f2_ms,naive_join_ms,naive_boundary_rows,naive_frag2_rows,split_count,split_ms,split_f1_ms,split_join_ms,split_f2_ms,split_boundary_rows,mono_vs_naive_match,mono_vs_split_match
+383,7,61430146,189069.55048441887,61430146,28816.00174307823,27073.490783572197,169.58492994308472,1572.9260295629501,105562551,129934,61430146,40735.995814204216,27419.6338057518,678.0831217765808,12638.278886675835,105562551,True,True

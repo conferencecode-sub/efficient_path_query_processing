@@ -48,3 +48,35 @@ def q4_aggregate(bound: float = MAX_MIN_BOUND) -> SelectiveAggregate:
         finalize_d="D",
         factorized=True,
     )
+
+
+def q4_default_aggregate(bound: float = MAX_MIN_BOUND) -> SelectiveAggregate:
+    """Default construction (Section 4.2): same dictionary/`update_d` as
+    `q4_aggregate`, but `is_viable_d` is trivially `TRUE` -- no early
+    pruning, walk semantics during exploration, matching what a
+    hand-written "\\DUCKDB\\ without \\ourabstraction" baseline would do.
+    The trail-disjointness and max-min-bound checks both move to
+    `is_viable_d_final`, evaluated once over the complete `D`. Per FR-22
+    (and Observation 1/Section 4.3), this must return the exact same
+    result set as `q4_aggregate`'s early-filtered version -- only the
+    exploration cost differs."""
+    return SelectiveAggregate(
+        dictionary_keys=(
+            DictionaryKey("edge_ids", "BIGINT[]"),
+            DictionaryKey("max_weight", "DOUBLE"),
+            DictionaryKey("min_weight", "DOUBLE"),
+        ),
+        init_d="{edge_ids: [], max_weight: -1e308, min_weight: 1e308}",
+        update_d=(
+            "{edge_ids: list_append(D.edge_ids, e.edge_id), "
+            "max_weight: GREATEST(D.max_weight, e.weight), "
+            "min_weight: LEAST(D.min_weight, e.weight)}"
+        ),
+        is_viable_d="TRUE",
+        is_viable_d_final=(
+            "len(D.edge_ids) = len(list_distinct(D.edge_ids)) "
+            f"AND D.max_weight - D.min_weight <= {bound}"
+        ),
+        finalize_d="D",
+        factorized=True,
+    )

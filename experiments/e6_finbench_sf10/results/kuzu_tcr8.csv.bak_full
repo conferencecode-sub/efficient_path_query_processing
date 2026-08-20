@@ -1,0 +1,8 @@
+length,result,reference_result,match,runtime_ms,error
+2,24990,24990,True,56388.665586709976,
+3,170230,170230,True,91508.55901837349,
+4,501419,501419,True,263659.7509384155,
+5,1162976,1162976,True,557172.6218611002,
+6,2085260,2085260,True,1017635.7527822256,
+7,3350001,3350001,True,2134055.4780960083,
+8,,4794460,False,,Buffer manager exception: Unable to allocate memory! The buffer pool is full and no memory could be freed!

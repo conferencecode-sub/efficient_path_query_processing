@@ -1,0 +1,8 @@
+=== start_vertex=383 ===
+len  mono(#)   mono(ms) |  naive(#)  naive(ms)         F1/F2/join(ms) |  split(#)  split(ms)         F1/join/F2(ms) | match
+  8 394855868 2238010.28 | 394855868  295171.07 283560.69/210.07/11400.31 | 394855868  321472.85 231536.98/4980.56/84955.32 | naive=OK split=OK
+
+Boundary/intermediate row counts:
+  len=8: naive F1 seam rows=751755167 F2 unseeded suffix rows=144773 | seeded-split F1 seam rows=751755167
+
+wrote 1 rows to results/original_regex_l8.csv

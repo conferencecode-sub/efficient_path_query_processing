@@ -13,3 +13,12 @@ __pycache__/
 # multiple GB), reproducible via each dataset's own generator/export script,
 # not source.
 experiments/datasets/
+
+# DuckDB temp-storage spill files from heavy local queries -- transient
+# scratch, not source.
+/.tmp/
+
+# Accidental nested duplicate of the separate ~/ReCAP repo (has its own
+# .git) -- not meant to live inside this repo at all; investigate/remove
+# separately rather than committing it.
+/ReCAP/
