@@ -73,7 +73,7 @@ Every stage's output is inspectable; the generated SQL is a first-class artifact
 
 **FR-3.** The system shall support at least CSV input and shall accept an already-registered DuckDB table by name. Column types shall be inferred, with an option for the author to override the inferred type of any column.
 
-**FR-4.** The system shall let the author select start vertices by explicit id list, by a predicate over vertex properties, or by out-degree quantile band (low `<25%`, medium `25–75%`, high `>75%`) to reproduce the paper's start-vertex methodology. **(Amended 2026-08-17, see `CHANGELOG.md`.)** When no explicit selection is given, the system shall default to an **all-vertices** mode: every distinct `src` value in the Edges table is used as a start vertex.
+**FR-4.** The system shall let the author select start vertices by explicit id list, by a predicate over vertex properties, or by out-degree quantile band (low `<25%`, medium `25–75%`, high `>75%`) to reproduce the paper's start-vertex methodology. **(Amended 2026-08-17.)** When no explicit selection is given, the system shall default to an **all-vertices** mode: every distinct `src` value in the Edges table is used as a start vertex.
 
 > *Mechanization:* CSV ingestion and type inference are non-novel — use DuckDB's native `read_csv_auto` and load directly into the execution engine, avoiding a separate parsing layer. Out-degree banding is a single SQL aggregate. No custom parser required.
 

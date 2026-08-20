@@ -497,7 +497,7 @@ exact match). 140 tests still pass (no compiler-source file changed,
 ## Completed: workbench UI checklist items (2026-08-17)
 
 Implements six requirements added to `new_compiler_requirements/
-compiler_reqs.md` (and its `CHANGELOG.md`) earlier the same day, from a
+compiler_reqs.md` earlier the same day, from a
 query-author UI checklist (`compiler/more_add_ons/checklist.txt`).
 
 - **Combining multiple library aggregates** (`selective_aggregate.py`): new `combine_library_aggregates(*aggregates)`
@@ -518,7 +518,7 @@ query-author UI checklist (`compiler/more_add_ons/checklist.txt`).
   directly beneath `update_d` in the custom-aggregate flow only (absent
   in library-aggregate mode), with `D1`/`D2` defaults seeded from the
   author's own `init_d` keys instead of a generic example -- see
-  `compiler_reqs.md`'s own entry and its `CHANGELOG.md`.
+  `compiler_reqs.md`'s own entry for this requirement.
 - **Regex operator help** (`webapp/app.py`): a regex-syntax-help expander next to the
   regex input, covering `|`, concatenation, `*`, `+`, `?`, `{m,n}`, and
   quoted labels.
