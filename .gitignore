@@ -28,3 +28,7 @@ experiments/datasets/
 # e.g. a reviewer response letter) does not belong in it. Moved to
 # ~/recap_paper_tex/ (mirroring the same relative paths) instead.
 *.tex
+
+# Reviewer PDF -- review/submission material, not code; moved to
+# ~/recap_paper_tex/ (same reasoning as *.tex above).
+info_background/new_reviews.pdf
