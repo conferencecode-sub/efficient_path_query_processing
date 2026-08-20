@@ -18,9 +18,9 @@ experiments/datasets/
 # scratch, not source.
 /.tmp/
 
-# Accidental nested duplicate of the separate ~/ReCAP repo (has its own
-# .git) -- not meant to live inside this repo at all; investigate/remove
-# separately rather than committing it.
+# Nested duplicate of the separate ~/ReCAP repo (has its own .git) -- not
+# meant to live inside this repo at all; relocated out already, kept here
+# as a safety net in case it ever reappears.
 /ReCAP/
 
 # Paper LaTeX source -- this repo is a conference-submission code artifact;
