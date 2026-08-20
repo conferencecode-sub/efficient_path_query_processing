@@ -35,12 +35,6 @@ implementation notes for anyone extending this.
   needed). Start here.
 - **`new_compiler_requirements/compiler_reqs.md`** -- the functional
   requirements spec the compiler is built against.
-- **`~/ReCAP`** -- an earlier prototype's code (`q1`/`q2`/`q3`/`q4` query
-  scripts) and the real-graph datasets used by the larger reproduction
-  pipeline under `experiments/`. This is a separate, external sibling git
-  repository (not part of this repo, and not required for the compiler
-  itself -- see Quick start above) -- only needed for reproducing the
-  experiments in `experiments/`.
 - **`experiments/alternative_explorations/`** -- standalone experiments
   exploring compatibility with segmented/non-forward path evaluation
   strategies; design in `navigation_style_experiment.md`, runnable
