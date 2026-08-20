@@ -10,10 +10,32 @@ the Ollama backend gets `ollama_call` injected as a plain
 nothing listening -- fast (connection refused, no timeout wait) and
 confirms the real function raises the right error without needing an
 actual Ollama server."""
+import sys
+import types
+
 import pytest
 
 from recap_compiler.errors import ProposerParseError, ProposerUnavailableError
 from recap_compiler.llm_proposer import _call_ollama, _client_from_env, propose_general_aggregate
+
+
+def _install_fake_anthropic_module(monkeypatch):
+    """`_client_from_env` does `import anthropic` -- the real package is an
+    optional `[llm]` extra, not part of `[dev]`, so a plain `pip install
+    -e '.[dev]'` (the documented setup) must not need it just to run this
+    file's tests. Injecting a fake module into `sys.modules` (Python's
+    import system checks there before ever touching disk) keeps these
+    tests real network/API-key-free *and* independent of whether the
+    optional package happens to be installed -- confirmed by a fresh
+    `[dev]`-only install actually failing here before this fix."""
+    fake_module = types.ModuleType("anthropic")
+
+    class _FakeAnthropicClient:
+        def __init__(self, api_key):
+            self.api_key = api_key
+
+    fake_module.Anthropic = _FakeAnthropicClient
+    monkeypatch.setitem(sys.modules, "anthropic", fake_module)
 
 
 class _FakeToolUseBlock:
@@ -233,12 +255,14 @@ def test_ollama_backend_defaults_to_its_own_model_when_none_given():
 
 
 def test_client_from_env_prefers_explicit_api_key_over_environment(monkeypatch):
+    _install_fake_anthropic_module(monkeypatch)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "env-key")
     client = _client_from_env("pasted-key")
     assert client.api_key == "pasted-key"
 
 
 def test_client_from_env_falls_back_to_environment_when_no_explicit_key(monkeypatch):
+    _install_fake_anthropic_module(monkeypatch)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "env-key")
     client = _client_from_env(None)
     assert client.api_key == "env-key"
