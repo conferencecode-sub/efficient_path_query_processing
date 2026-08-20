@@ -1,0 +1,12 @@
+# Suppresses a benign, one-time-per-process Streamlit log warning ("The
+# widget with key ... was created with a default value but also had its
+# value set via the Session State API."). This workbench intentionally
+# triggers it: the "Draft with LLM" button's callback writes a drafted
+# value into e.g. `custom_init_d`'s session-state key so the widget picks
+# it up on the next render, which is exactly the documented use of
+# `st.session_state` from a callback -- not a bug. The warning's own
+# stack trace (`stack_info=True`) makes it look like a crash even though
+# nothing raised and the draft applies correctly regardless; this option
+# just quiets that specific, expected noise.
+[global]
+disableWidgetStateDuplicationWarning = true

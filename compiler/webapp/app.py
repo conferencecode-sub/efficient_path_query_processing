@@ -57,7 +57,7 @@ import streamlit as st
 from recap_compiler.errors import RecapCompilerError, RefError
 from recap_compiler.execution import run_query
 from recap_compiler.ingestion import load_graph, select_start_vertices, set_trivial_label_column
-from recap_compiler.llm_proposer import propose_general_aggregate
+from recap_compiler.llm_proposer import DEFAULT_MODEL, DEFAULT_OLLAMA_MODEL, propose_general_aggregate
 from recap_compiler.optimizer import build_optimized_query
 from recap_compiler.profiling import TimingBreakdown, timed_stage
 from recap_compiler.regex_frontend import compile_regex_to_nfa
@@ -177,6 +177,54 @@ def _infer_dictionary_keys(init_d_body: str) -> tuple[DictionaryKey, ...]:
         return ()
     return tuple(DictionaryKey(name=name, sql_type=str(child_type))
                  for name, child_type in struct_type.children)
+
+
+# Common scalar DuckDB types offered in the dictionary-key type editor
+# below -- deliberately not exhaustive (no container/struct types): a key
+# whose *inferred* type is already a container (e.g. `INTEGER[]` for a
+# trail's `edge_ids`) still gets that exact type as one of its own
+# dropdown options (see `_dictionary_key_type_editor`), it's just not
+# something an override can turn a plain scalar key *into* here.
+_DICT_KEY_TYPE_CHOICES = (
+    "BOOLEAN", "TINYINT", "SMALLINT", "INTEGER", "BIGINT", "HUGEINT",
+    "FLOAT", "DOUBLE", "DECIMAL(18,4)", "VARCHAR", "DATE", "TIME", "TIMESTAMP",
+)
+
+
+def _dictionary_key_type_editor(dictionary_keys: tuple[DictionaryKey, ...],
+                                 *, key: str) -> tuple[DictionaryKey, ...]:
+    """Lets the author override a dictionary key's inferred SQL type --
+    e.g. `init_d`'s `{last_time: NULL}` infers `last_time` as INTEGER
+    (DuckDB's default for a bare untyped `NULL`), too narrow for a real
+    BIGINT epoch-millisecond timestamp once real edge data flows through
+    `update_d` -- exactly the bug `typed_init_d`'s own docstring documents
+    as having bitten a real user. `typed_init_d` already casts `init_d`'s
+    anchor to whatever's declared here (Stage E and F both call it), so an
+    override picked in this table is not cosmetic -- it changes the
+    generated SQL.
+
+    The widget's key is derived from the *inferred* `(name, type)` pairs,
+    not a fixed string, so an `init_d` edit that changes what DuckDB
+    itself would infer resets this table to the fresh inference (no stale
+    override silently surviving a key's own meaning changing); an edit
+    that leaves inference unchanged keeps whatever override the author
+    already chose, the same "reset only when it actually needs to"
+    convention the update_d/is_viable_d table below uses for its own key."""
+    inferred = {k.name: k.sql_type for k in dictionary_keys}
+    options = sorted({*_DICT_KEY_TYPE_CHOICES, *inferred.values()})
+    edited = st.data_editor(
+        pd.DataFrame([{"name": name, "sql_type": sql_type} for name, sql_type in inferred.items()]),
+        key=f"{key}::{tuple(inferred.items())}", hide_index=True, num_rows="fixed",
+        disabled=["name"],
+        column_config={
+            "sql_type": st.column_config.SelectboxColumn(
+                "sql_type", options=options,
+                help="Overrides the type DuckDB inferred from init_d's own literal for this "
+                     "key -- e.g. widen a bare `NULL`'s inferred INTEGER to BIGINT/DOUBLE for "
+                     "a real timestamp/amount.")
+        })
+    return tuple(DictionaryKey(name=row["name"], sql_type=row["sql_type"])
+                 for row in edited.to_dict("records"))
 
 
 @st.cache_data(show_spinner=False)
@@ -312,7 +360,8 @@ if use_regex:
     # elsewhere on the page never resets what the user has edited here, but
     # switching to a different label column (a genuinely new key) gets a
     # fresh random example drawn from that column's own alphabet.
-    regex = st.text_input("Label regex", value=default_regex, key=f"label_regex::{label_column}")
+    with st.container(key="regex_input_box"):
+        regex = st.text_input("Label regex", value=default_regex, key=f"label_regex::{label_column}")
     with st.expander("Regex syntax help"):
         st.markdown(
             "- `|` union -- `a|b` matches label `a` or label `b`\n"
@@ -326,10 +375,13 @@ if use_regex:
             f"Example from this dataset's own alphabet: `{default_regex}`")
     try:
         # minimize=False here regardless of the "Minimize the automaton
-        # first" checkbox below (General mode only) -- this build is just
-        # to validate the regex parses and to guard against an ambiguous
-        # default automaton; General mode's own checkbox rebuilds its own
-        # table-scoped relation afterward, once it's actually in scope.
+        # first" checkbox just below -- this build is only to validate the
+        # regex parses and to guard against an ambiguous default automaton.
+        # The checkbox's own choice is applied once it's actually in scope,
+        # right after, and is shared by everything downstream that needs an
+        # automaton: this preview, the General-mode aggregate table further
+        # down, and the actual compiled query at Compile & run time (all
+        # three read the same `minimize_automaton` session-state key).
         nfa = compile_regex_to_nfa(regex, minimize=False)
         relation = build_transitions_relation(nfa)
         nfa, relation, ambiguity_warning = guard_against_ambiguity(regex, nfa, relation)
@@ -338,6 +390,57 @@ if use_regex:
     except RecapCompilerError as exc:
         _friendly_error(exc)
         st.stop()
+
+    minimize_automaton = st.checkbox(
+        "Minimize the automaton first", value=True, key="minimize_automaton",
+        help="Collapses the regex's automaton to its minimal DFA -- typically far fewer "
+             "transition pairs to author (Q1's own regex, e.g., goes from 36 states/95 "
+             "transitions down to 3 states/10), and a minimal DFA is always unambiguous "
+             "(never overcounts results). This one choice drives the preview right below, "
+             "the General-mode selective-aggregate table further down, and the actual "
+             "query Compile & run builds -- toggling it resets the preview and the "
+             "aggregate table alike, so decide this before filling either one in, not "
+             "after.")
+
+    # Accepted-regex feedback, shown as soon as the regex above parses (a
+    # `RecapCompilerError` above already `st.stop()`s the whole script, so
+    # reaching this point means it's valid): an always-visible success
+    # banner plus the automaton (minimized or not, per the checkbox just
+    # above), so the author immediately sees what they wrote actually
+    # compiles to. `_preview_pairs`/`_preview_labels_by_pair` aren't just a
+    # preview -- the General-mode aggregate table further down reuses these
+    # exact two, rather than recomputing its own copy, specifically so the
+    # checkbox above can't drift the two out of sync with each other.
+    # Also outlines the input box above in green, via Streamlit's documented
+    # `key` -> `st-key-<key>` CSS class feature targeting BaseWeb's own
+    # input wrapper -- a bonus visual cue, not verified in a real browser
+    # since none is available in this environment, so the banner is the
+    # guaranteed part of this signal, not the outline.
+    if minimize_automaton:
+        _preview_nfa = compile_regex_to_nfa(regex, minimize=True)
+        _preview_relation = build_transitions_relation(_preview_nfa)
+    else:
+        _preview_nfa, _preview_relation = nfa, relation
+    _preview_pairs = sorted({(frm, to) for frm, to, _ in _preview_relation.rows})
+    _preview_labels_by_pair: dict[tuple[int, int], set[str]] = {}
+    for _frm, _to, _label in _preview_relation.rows:
+        _preview_labels_by_pair.setdefault((_frm, _to), set()).add(_label)
+    st.success(
+        f"Regex accepted -- {'minimizes to' if minimize_automaton else 'compiles to'} "
+        f"{len(_preview_nfa.states)} states / {len(_preview_pairs)} transition pairs "
+        f"(q0={_preview_relation.q0}, accepting={sorted(_preview_relation.accepting_states)}).")
+    with st.expander(
+            "Minimized automaton (transitions relation)" if minimize_automaton
+            else "Automaton (transitions relation, not minimized)", expanded=True):
+        st.dataframe(pd.DataFrame([
+            {"from_state": frm, "to_state": to,
+             "labels": ", ".join(sorted(_preview_labels_by_pair[(frm, to)]))}
+            for frm, to in _preview_pairs
+        ]), hide_index=True)
+    st.markdown(
+        '<style>.st-key-regex_input_box div[data-baseweb="base-input"] '
+        '{ border: 2px solid #21ba45 !important; }</style>',
+        unsafe_allow_html=True)
 else:
     st.caption("No label regex -- every edge up to the length bound will be explored, filtered "
                "only by the selective aggregate below.")
@@ -378,6 +481,135 @@ if structure_mode == "General":
                "there's no separate table to keep in sync by hand. Edit `init_d`, and the "
                "tracked keys (shown below it) follow.")
 
+    # The "Minimize the automaton first" choice now lives in the "Label
+    # regex" subsection above (right by the regex input, next to its own
+    # preview of the same automaton) rather than a second copy here --
+    # `_pairs`/`_labels_by_pair` are that subsection's own `_preview_pairs`/
+    # `_preview_labels_by_pair`, reused as-is rather than recomputed, so
+    # this table and that preview can never drift out of sync with each
+    # other over which automaton they're both showing. No regex at all
+    # ("Label regex" left on its no-regex option) means those names were
+    # never defined up there, so fall back to the same
+    # trivial_relation() Stage A/G already use for a regex-less query.
+    if use_regex:
+        _pairs, _labels_by_pair = _preview_pairs, _preview_labels_by_pair
+    else:
+        _table_relation = trivial_relation()
+        _pairs = sorted({(frm, to) for frm, to, _label in _table_relation.rows})
+        _labels_by_pair: dict[tuple[int, int], set[str]] = {}
+        for _frm, _to, _label in _table_relation.rows:
+            _labels_by_pair.setdefault((_frm, _to), set()).add(_label)
+
+    with st.expander("Draft with LLM (optional)"):
+        st.caption(
+            "Optional: describe the constraint in plain English (and/or SQL-style), and a "
+            "model drafts `init_d`/`update_d`/`is_viable_d`/`is_viable_d_final`/"
+            "`finalize_d` below all at once -- seeing this automaton's own transition "
+            "pairs, the edge columns available, and the same function specs/guiding "
+            "example shown further down. **No privileged path:** whatever it drafts lands "
+            "in the exact same boxes below that you'd type into by hand, and goes through "
+            "the same validation as any hand-written aggregate before Compile & run. "
+            "`is_viable_d`/`is_viable_d_final` are pruning checks -- an unsound one "
+            "silently drops real results with no visible symptom, so any pair (or the "
+            "final check) the model isn't confident about is overridden to `TRUE` (never "
+            "pruned) here; its original attempt is shown below, flagged, for you to "
+            "review and promote by hand if you judge it sound.")
+        llm_backend_choice = st.radio(
+            "Backend", ["Hosted Claude API", "Local Ollama (no API key)"],
+            key="llm_backend_choice", horizontal=True,
+            help="**Hosted Claude API:** needs `ANTHROPIC_API_KEY` set in the environment "
+                 "this workbench runs in, and a per-call charge -- but fast, and not "
+                 "constrained by this machine's own hardware.\n\n"
+                 "**Local Ollama:** no API key/account/network beyond localhost, no charge -- "
+                 "but only as fast (and as accurate) as an already-running local "
+                 "`ollama serve` and whatever model you've pulled allow; on this project's own "
+                 "hardware that was previously measured at 40s-8min per draft.")
+        llm_backend = "anthropic" if llm_backend_choice == "Hosted Claude API" else "ollama"
+        if llm_backend == "anthropic":
+            llm_model = DEFAULT_MODEL
+            llm_ollama_host = None
+            llm_api_key = st.text_input(
+                "Anthropic API key (optional)", value="", type="password",
+                key="llm_anthropic_api_key",
+                help="Paste a key here to use it directly for this session, instead of "
+                     "setting `ANTHROPIC_API_KEY` in the environment this workbench runs in "
+                     "(get one at https://console.anthropic.com/settings/keys). Kept only in "
+                     "this browser session's widget state -- never written to disk by this "
+                     "panel.") or None
+        else:
+            llm_api_key = None
+            llm_model = st.text_input(
+                "Ollama model", value=DEFAULT_OLLAMA_MODEL, key="llm_ollama_model",
+                help="Must already be pulled (`ollama pull <model>`) and `ollama serve` must "
+                     "already be running -- this panel doesn't start either for you.")
+            llm_ollama_host = st.text_input(
+                "Ollama host", value="", key="llm_ollama_host",
+                placeholder="http://localhost:11434 (default -- leave blank unless it's running elsewhere)"
+            ) or None
+        st.text_area(
+            "Constraint (plain English)", key="llm_constraint_description", height=80,
+            placeholder='e.g. "the running total of e.amount must never exceed 1000, and no '
+                        'edge may be revisited"')
+        def _run_llm_draft():
+            # A callback, not an inline `if st.button(...)` body: this needs
+            # to write to `custom_init_d`/etc.'s own session_state keys, and
+            # those widgets are declared *later* in the script than this
+            # button -- setting their session_state after they've already
+            # rendered in the same run raises StreamlitAPIException, and
+            # this box is now declared *before* those widgets specifically
+            # so a draft can pre-fill them. A button's `on_click` callback
+            # runs *before* the script's next top-to-bottom pass (which
+            # re-instantiates every widget from scratch), so it's the one
+            # place such a write is legal regardless of declaration order.
+            try:
+                draft = propose_general_aggregate(
+                    constraint_description=st.session_state.get("llm_constraint_description", ""),
+                    transition_pairs=_pairs, labels_by_pair=_labels_by_pair,
+                    edge_columns={c: column_types[c] for c in edge_columns
+                                  if c not in {"src", "dst", "edge_id"}},
+                    backend=llm_backend, model=llm_model, api_key=llm_api_key,
+                    ollama_host=llm_ollama_host)
+            except RecapCompilerError as exc:
+                st.session_state["_general_table_draft_error"] = exc
+                return
+            st.session_state["_general_table_draft_error"] = None
+            st.session_state["custom_init_d"] = draft.init_d
+            st.session_state["custom_is_viable_d_final"] = draft.is_viable_d_final
+            st.session_state["custom_finalize_d"] = draft.finalize_d
+            st.session_state["_general_table_draft"] = draft
+            st.session_state["_general_table_draft_version"] = (
+                st.session_state.get("_general_table_draft_version", 0) + 1)
+            # A toast, not a permanent st.success box: this callback runs
+            # once per click, but `_general_table_draft` (checked below to
+            # decide whether to show the sticky unconfident-pairs warning)
+            # stays in session_state across every later rerun -- a
+            # non-transient success message keyed off the same state would
+            # then show forever after the first successful draft, not just
+            # right after this click. `st.toast` is the one element type
+            # documented to work when called from inside a widget callback
+            # like this one (it queues onto the next rerun's toast overlay,
+            # not into the script's own element tree).
+            st.toast(
+                f"Draft applied via {llm_backend_choice} to `init_d`, `update_d`/`is_viable_d` "
+                f"({len(_pairs)} pair(s)), `is_viable_d_final`, and `finalize_d` below.",
+                icon="✅")
+
+        st.button(f"Draft with {llm_backend_choice}", on_click=_run_llm_draft)
+        _draft_error = st.session_state.get("_general_table_draft_error")
+        if _draft_error is not None:
+            _friendly_error(_draft_error)
+        _shown_draft = st.session_state.get("_general_table_draft")
+        if _shown_draft is not None and (_shown_draft.unconfident_pairs
+                                          or _shown_draft.is_viable_d_final_unconfident):
+            st.warning("The last draft wasn't confident about some pruning checks -- each one "
+                       "was overridden to `TRUE` below (never pruned); original attempts, "
+                       "unvetted, for you to review:")
+            if _shown_draft.is_viable_d_final_unconfident:
+                st.code(f"is_viable_d_final(D): {_shown_draft.raw_is_viable_d_final}", language="sql")
+            for _unconfident_pair in sorted(_shown_draft.unconfident_pairs):
+                st.code(f"is_viable_d for {_unconfident_pair}: "
+                        f"{_shown_draft.raw_is_viable_d[_unconfident_pair]}", language="sql")
+
     _default_init_d = (f"{{max_{_default_property}: -1e308, min_{_default_property}: 1e308}}"
                         if _default_property is not None else "{my_key: 0.0}")
     _default_is_viable_d_final = "TRUE"
@@ -387,17 +619,17 @@ if structure_mode == "General":
         "init_d()", value=_default_init_d, height=80, key="custom_init_d",
         help="**Role:** the dictionary's value at the anchor (path length 0), before any edge "
              "is taken. Nothing is in scope here (no `D`, no `e`) -- build it from "
-             "literals/constants only. Its keys and their types (shown below) are inferred "
-             "directly from this struct literal.\n\n"
-             "**Examples:** `{last_time: NULL}` (one nullable DOUBLE key); "
+             "literals/constants only. Its keys and their types (shown below, editable) are "
+             "inferred directly from this struct literal.\n\n"
+             "**Examples:** `{last_time: NULL}` (one key, inferred as INTEGER -- widen it to "
+             "BIGINT/DOUBLE in the table below if real timestamps need more range); "
              "`{max_amt: -1e308, min_amt: 1e308}` (two DOUBLE keys, seeded so the first real "
              "edge always widens the range).")
 
     try:
         dictionary_keys = _infer_dictionary_keys(custom_init_d)
         if dictionary_keys:
-            st.dataframe(pd.DataFrame([{"name": k.name, "sql_type": k.sql_type} for k in dictionary_keys]),
-                         hide_index=True)
+            dictionary_keys = _dictionary_key_type_editor(dictionary_keys, key="general_dict_key_types")
         else:
             st.caption("(`init_d` doesn't evaluate to a struct, so this aggregate tracks no "
                        "dictionary keys -- fine for an aggregate that only checks the path shape.)")
@@ -406,22 +638,15 @@ if structure_mode == "General":
         dictionary_keys = None  # fix init_d above before this can run
 
     # update_d/is_viable_d may differ per (from_state, to_state) transition
-    # pair, edited as one table instead of a per-pair text box each -- the
-    # scale problem that originally kept non-factorized authoring out of the
-    # workbench. `relation` may be None (no regex picked in Section 2);
+    # pair, edited as one table below instead of a per-pair text box each --
+    # the scale problem that originally kept non-factorized authoring out of
+    # the workbench. `relation` may be None (no regex picked in Section 2);
     # fall back to the same trivial_relation() Stage A/G already use for a
     # regex-less query, so the table still has something to show (a single
     # (0,0) row).
-    minimize_automaton = False
-    if use_regex:
-        minimize_automaton = st.checkbox(
-            "Minimize the automaton first", value=True, key="minimize_automaton",
-            help="Collapses the regex's automaton to its minimal DFA before building the "
-                 "table below -- typically far fewer transition pairs to author (Q1's own "
-                 "regex, e.g., goes from 36 states/95 transitions down to 3 states/10), and "
-                 "a minimal DFA is always unambiguous (never overcounts results). This "
-                 "changes what `from_state`/`to_state` actually number, so toggling it "
-                 "resets the table below -- fill it in after deciding, not before.")
+    if len(_pairs) > 50:
+        st.warning(f"This automaton has {len(_pairs)} transition pairs -- editing all of "
+                   "them here may be slow. A simpler/shorter regex produces fewer pairs.")
 
     with st.expander("Example: filling in this table (\\(Q_B\\), from the paper's Figure 5)"):
         st.caption(
@@ -445,78 +670,6 @@ if structure_mode == "General":
              "is_viable_d": "NOT list_contains(D.edge_ids, e.id) "
                             "AND abs(e.time - D.last_time) <= 3"},
         ]), hide_index=True)
-
-    if minimize_automaton and use_regex:
-        _table_relation = build_transitions_relation(compile_regex_to_nfa(regex, minimize=True))
-    else:
-        _table_relation = relation if relation is not None else trivial_relation()
-    _pairs = sorted({(frm, to) for frm, to, _label in _table_relation.rows})
-    _labels_by_pair: dict[tuple[int, int], set[str]] = {}
-    for _frm, _to, _label in _table_relation.rows:
-        _labels_by_pair.setdefault((_frm, _to), set()).add(_label)
-
-    with st.expander("Draft with LLM (Module J, optional)"):
-        st.caption(
-            "Optional: describe the constraint in plain English (and/or SQL-style), and a "
-            "hosted Claude model drafts `init_d`/`update_d`/`is_viable_d`/`is_viable_d_final`/"
-            "`finalize_d` -- seeing this automaton's own transition pairs above, the edge "
-            "columns available, and the same function specs/guiding example shown above. "
-            "**No privileged path:** whatever it drafts lands in the exact same boxes below "
-            "that you'd type into by hand, and goes through the same validation as any "
-            "hand-written aggregate before Compile & run. `is_viable_d`/`is_viable_d_final` "
-            "are pruning checks -- an unsound one silently drops real results with no visible "
-            "symptom, so any pair (or the final check) the model isn't confident about is "
-            "overridden to `TRUE` (never pruned) here; its original attempt is shown below, "
-            "flagged, for you to review and promote by hand if you judge it sound.")
-        st.text_area(
-            "Constraint (plain English)", key="llm_constraint_description", height=80,
-            placeholder='e.g. "the running total of e.amount must never exceed 1000, and no '
-                        'edge may be revisited"')
-        def _run_llm_draft():
-            # A callback, not an inline `if st.button(...)` body: this needs
-            # to write to `custom_init_d`/etc.'s own session_state keys, and
-            # those widgets are declared *earlier* in the script than this
-            # button -- setting their session_state after they've already
-            # rendered in the same run raises StreamlitAPIException. A
-            # button's `on_click` callback runs *before* the script's next
-            # top-to-bottom pass (which re-instantiates every widget from
-            # scratch), so it's the one place such a write is legal.
-            try:
-                draft = propose_general_aggregate(
-                    constraint_description=st.session_state.get("llm_constraint_description", ""),
-                    transition_pairs=_pairs, labels_by_pair=_labels_by_pair,
-                    edge_columns={c: column_types[c] for c in edge_columns
-                                  if c not in {"src", "dst", "edge_id"}})
-            except RecapCompilerError as exc:
-                st.session_state["_general_table_draft_error"] = exc
-                return
-            st.session_state["_general_table_draft_error"] = None
-            st.session_state["custom_init_d"] = draft.init_d
-            st.session_state["custom_is_viable_d_final"] = draft.is_viable_d_final
-            st.session_state["custom_finalize_d"] = draft.finalize_d
-            st.session_state["_general_table_draft"] = draft
-            st.session_state["_general_table_draft_version"] = (
-                st.session_state.get("_general_table_draft_version", 0) + 1)
-
-        st.button("Draft with LLM", on_click=_run_llm_draft)
-        _draft_error = st.session_state.get("_general_table_draft_error")
-        if _draft_error is not None:
-            _friendly_error(_draft_error)
-        _shown_draft = st.session_state.get("_general_table_draft")
-        if _shown_draft is not None and (_shown_draft.unconfident_pairs
-                                          or _shown_draft.is_viable_d_final_unconfident):
-            st.warning("The last draft wasn't confident about some pruning checks -- each one "
-                       "was overridden to `TRUE` below (never pruned); original attempts, "
-                       "unvetted, for you to review:")
-            if _shown_draft.is_viable_d_final_unconfident:
-                st.code(f"is_viable_d_final(D): {_shown_draft.raw_is_viable_d_final}", language="sql")
-            for _unconfident_pair in sorted(_shown_draft.unconfident_pairs):
-                st.code(f"is_viable_d for {_unconfident_pair}: "
-                        f"{_shown_draft.raw_is_viable_d[_unconfident_pair]}", language="sql")
-
-    if len(_pairs) > 50:
-        st.warning(f"This automaton has {len(_pairs)} transition pairs -- editing all of "
-                   "them here may be slow. A simpler/shorter regex produces fewer pairs.")
 
     st.caption(f"One row per `(from\\_state, to\\_state)` transition pair ({len(_pairs)} "
                "total). Unedited rows default to `D` (unchanged) / `TRUE` (always viable) "
@@ -571,11 +724,11 @@ if structure_mode == "General":
     with st.expander("Merge-function authoring box (sketch only -- not run)"):
         st.caption(
             "Sketch how two fragments *both running the `update_d` above* would "
-            "compose their dictionaries at a seam (e.g. for a split/wavefront-style plan; "
+            "combine at a seam (e.g. for a split/wavefront-style plan; "
             "the compiler keeps the NFA non-deterministic specifically to stay compatible with "
             "this kind of segment-based planning -- see Section 12 non-goal 3). Authoring aid "
             "only: nothing here is parsed, validated, or used by Compile & run below -- no "
-            "split/merge execution plan is generated from it in this revision.")
+            "split/merge execution plan is generated from either function in this revision.")
         _merge_default_d = custom_init_d if dictionary_keys else "{last_time: NULL}"
         merge_d1 = st.text_area("D1", value=_merge_default_d, height=60, key="merge_d1",
                                  help="Sketch of the first fragment's dictionary -- same "
@@ -583,14 +736,22 @@ if structure_mode == "General":
                                       "since both fragments run the same update_d above.")
         merge_d2 = st.text_area("D2", value=_merge_default_d, height=60, key="merge_d2",
                                  help="Sketch of the second fragment's dictionary.")
+        merge_is_mergable_d_body = st.text_area(
+            "is_mergable_d(D1, D2)", value="TRUE", height=60, key="merge_is_mergable_d_body",
+            help="Sketch of whether the two fragments may be joined at this seam at all -- "
+                 "the merge-time counterpart of `is_viable_d`, checked before `merge_d` below "
+                 "combines them. Prefilled to `TRUE` (always mergeable); edit to whatever "
+                 "compatibility condition makes sense (e.g. `D1.last_time <= D2.last_time` "
+                 "to require the seam not go backwards in time).")
         if dictionary_keys:
             _merge_default_body = "{" + ", ".join(
                 f"{k.name}: D1.{k.name}" for k in dictionary_keys) + "}"
         else:
             _merge_default_body = "D1"
         merge_function_body = st.text_area(
-            "merge(D1, D2)", value=_merge_default_body, height=60, key="merge_function_body",
-            help="Sketch of how D1 and D2 combine into one dictionary at the seam vertex. "
+            "merge_d(D1, D2)", value=_merge_default_body, height=60, key="merge_function_body",
+            help="Sketch of how D1 and D2 combine into one dictionary at the seam vertex, "
+                 "given `is_mergable_d` above already held. "
                  "Prefilled to just keep D1's value per key -- edit each key to whatever "
                  "combination makes sense for it (e.g. GREATEST/LEAST for a running "
                  "extremum, list_concat for a trail).")
@@ -699,17 +860,17 @@ else:  # Factorized
             "init_d()", value=_default_init_d, height=80, key="custom_init_d",
             help="**Role:** the dictionary's value at the anchor (path length 0), before any "
                  "edge is taken. Nothing is in scope here (no `D`, no `e`) -- build it from "
-                 "literals/constants only. Its keys and their types (shown below) are inferred "
-                 "directly from this struct literal.\n\n"
-                 "**Examples:** `{last_time: NULL}` (one nullable DOUBLE key); "
+                 "literals/constants only. Its keys and their types (shown below, editable) "
+                 "are inferred directly from this struct literal.\n\n"
+                 "**Examples:** `{last_time: NULL}` (one key, inferred as INTEGER -- widen it "
+                 "to BIGINT/DOUBLE in the table below if real timestamps need more range); "
                  "`{max_amt: -1e308, min_amt: 1e308}` (two DOUBLE keys, seeded so the first "
                  "real edge always widens the range).")
 
         try:
             dictionary_keys = _infer_dictionary_keys(custom_init_d)
             if dictionary_keys:
-                st.dataframe(pd.DataFrame([{"name": k.name, "sql_type": k.sql_type} for k in dictionary_keys]),
-                             hide_index=True)
+                dictionary_keys = _dictionary_key_type_editor(dictionary_keys, key="factorized_dict_key_types")
             else:
                 st.caption("(`init_d` doesn't evaluate to a struct, so this aggregate tracks "
                            "no dictionary keys -- fine for an aggregate that only checks the "
@@ -734,12 +895,12 @@ else:  # Factorized
         with st.expander("Merge-function authoring box (sketch only -- not run)"):
             st.caption(
                 "Sketch how two fragments *both running the `update_d` above* would "
-                "compose their dictionaries at a seam (e.g. for a split/wavefront-style plan; "
+                "combine at a seam (e.g. for a split/wavefront-style plan; "
                 "the compiler keeps the NFA non-deterministic specifically to stay compatible "
                 "with this kind of segment-based planning -- see Section 12 non-goal 3). "
                 "Authoring aid only: nothing here is parsed, validated, or used by Compile & "
-                "run below -- no split/merge execution plan is generated from it in this "
-                "revision.")
+                "run below -- no split/merge execution plan is generated from either function "
+                "in this revision.")
             _merge_default_d = custom_init_d if dictionary_keys else "{last_time: NULL}"
             merge_d1 = st.text_area("D1", value=_merge_default_d, height=60, key="merge_d1",
                                      help="Sketch of the first fragment's dictionary -- same "
@@ -747,14 +908,23 @@ else:  # Factorized
                                           "since both fragments run the same update_d above.")
             merge_d2 = st.text_area("D2", value=_merge_default_d, height=60, key="merge_d2",
                                      help="Sketch of the second fragment's dictionary.")
+            merge_is_mergable_d_body = st.text_area(
+                "is_mergable_d(D1, D2)", value="TRUE", height=60, key="merge_is_mergable_d_body",
+                help="Sketch of whether the two fragments may be joined at this seam at all -- "
+                     "the merge-time counterpart of `is_viable_d`, checked before `merge_d` "
+                     "below combines them. Prefilled to `TRUE` (always mergeable); edit to "
+                     "whatever compatibility condition makes sense (e.g. "
+                     "`D1.last_time <= D2.last_time` to require the seam not go backwards "
+                     "in time).")
             if dictionary_keys:
                 _merge_default_body = "{" + ", ".join(
                     f"{k.name}: D1.{k.name}" for k in dictionary_keys) + "}"
             else:
                 _merge_default_body = "D1"
             merge_function_body = st.text_area(
-                "merge(D1, D2)", value=_merge_default_body, height=60, key="merge_function_body",
-                help="Sketch of how D1 and D2 combine into one dictionary at the seam vertex. "
+                "merge_d(D1, D2)", value=_merge_default_body, height=60, key="merge_function_body",
+                help="Sketch of how D1 and D2 combine into one dictionary at the seam vertex, "
+                     "given `is_mergable_d` above already held. "
                      "Prefilled to just keep D1's value per key -- edit each key to whatever "
                      "combination makes sense for it (e.g. GREATEST/LEAST for a running "
                      "extremum, list_concat for a trail).")
@@ -796,7 +966,7 @@ else:  # Factorized
             )
 
 compare_to_standard = st.checkbox(
-    "Also run the unoptimized (Stage E) query, to check it agrees with the optimized one",
+    "Also run the unoptimized query, to check it agrees with the optimized one",
     value=True)
 
 run_clicked = st.button("Compile & run", type="primary")
@@ -812,16 +982,18 @@ if not run_clicked:
 breakdown = TimingBreakdown()
 try:
     if use_regex:
-        with timed_stage(breakdown, "B: regex -> NFA"):
-            # Reads "Minimize the automaton first" (Section 3, General mode
-            # only) via session_state rather than the `minimize_automaton`
-            # local above -- this block is a deliberately independent,
-            # freshly-timed recomputation (see comment below), not a reuse
-            # of the live preview's own variables.
-            nfa = compile_regex_to_nfa(regex, minimize=st.session_state.get("minimize_automaton", False))
-        with timed_stage(breakdown, "C: build transitions relation"):
+        with timed_stage(breakdown, "regex -> NFA"):
+            # `minimize_automaton` (the "Label regex" subsection's own
+            # checkbox, now shared by both structure modes) is read
+            # directly here, not recomputed -- but `nfa`/`relation`
+            # themselves are still rebuilt from scratch in this block
+            # rather than reusing the live preview's own copies, so the
+            # timing breakdown below reflects a full fresh run, not one
+            # that benefits from work already done live above.
+            nfa = compile_regex_to_nfa(regex, minimize=minimize_automaton)
+        with timed_stage(breakdown, "build transitions relation"):
             relation = build_transitions_relation(nfa)  # deterministic construction -- same content as above
-        with timed_stage(breakdown, "C: ambiguity guard"):
+        with timed_stage(breakdown, "ambiguity guard"):
             nfa, relation, ambiguity_warning = guard_against_ambiguity(regex, nfa, relation)
         if ambiguity_warning:
             st.warning(ambiguity_warning)
@@ -856,7 +1028,7 @@ try:
             dataset_path = tmp.name
     else:
         dataset_path = DEFAULT_DATASET
-    with timed_stage(breakdown, "A: load graph"):
+    with timed_stage(breakdown, "load graph"):
         handle = load_graph(conn, dataset_path,
                              label_column=label_column if use_regex else None)
         if not use_regex:
@@ -865,10 +1037,10 @@ try:
             # real label the source data has.
             set_trivial_label_column(conn)
 
-    with timed_stage(breakdown, "D: validate aggregate"):
+    with timed_stage(breakdown, "validate aggregate"):
         validate_selective_aggregate(aggregate, edge_columns=set(edge_columns), transitions=relation)
 
-    with timed_stage(breakdown, "A: select start vertices"):
+    with timed_stage(breakdown, "select start vertices"):
         if start_vertex_ids_text is not None:
             stripped_ids_text = start_vertex_ids_text.strip()
             if not stripped_ids_text:
@@ -889,7 +1061,7 @@ try:
                        f"{MANY_START_VERTICES_CAP} to keep this responsive.")
             starts = starts[:MANY_START_VERTICES_CAP]
 
-    with timed_stage(breakdown, "C: materialize transitions table"):
+    with timed_stage(breakdown, "materialize transitions table"):
         materialize_transitions(conn, relation)
 
 except RecapCompilerError as exc:
@@ -902,19 +1074,19 @@ st.write(f"start vertices: {starts}")
 col_std, col_opt = st.columns(2) if compare_to_standard else (st.container(), None)
 
 try:
-    with timed_stage(breakdown, "F: generate optimized SQL"):
+    with timed_stage(breakdown, "generate optimized SQL"):
         optimized_query = build_optimized_query(aggregate=aggregate, relation=relation,
                                                  start_vertices=starts, length_bound=int(length_bound))
-    with timed_stage(breakdown, "G: execute optimized query"):
+    with timed_stage(breakdown, "execute optimized query"):
         optimized_result = run_query(conn, optimized_query, result_shape="paths")
 
     if compare_to_standard:
-        with timed_stage(breakdown, "E: register aggregate macros"):
+        with timed_stage(breakdown, "register aggregate macros"):
             register_aggregate_macros(conn, aggregate)
-        with timed_stage(breakdown, "E: generate standard SQL"):
+        with timed_stage(breakdown, "generate standard SQL"):
             standard_query = build_standard_query(relation=relation, start_vertices=starts,
                                                    length_bound=int(length_bound))
-        with timed_stage(breakdown, "G: execute standard query"):
+        with timed_stage(breakdown, "execute standard query"):
             standard_result = run_query(conn, standard_query, result_shape="paths")
 
 except RecapCompilerError as exc:
@@ -922,7 +1094,7 @@ except RecapCompilerError as exc:
     st.stop()
 
 with col_opt if compare_to_standard else col_std:
-    st.subheader("Optimized (Stage F)")
+    st.subheader("Optimized")
     st.code(optimized_query.sql, language="sql")
     st.metric("Paths found", f"{len(optimized_result.rows):,}")
     st.metric("Runtime", f"{optimized_result.telemetry.runtime_ms:.1f} ms")
@@ -936,7 +1108,7 @@ with col_opt if compare_to_standard else col_std:
 
 if compare_to_standard:
     with col_std:
-        st.subheader("Standard (Stage E, unoptimized)")
+        st.subheader("Standard (unoptimized)")
         st.code(standard_query.sql, language="sql")
         st.metric("Paths found", f"{len(standard_result.rows):,}")
         st.metric("Runtime", f"{standard_result.telemetry.runtime_ms:.1f} ms")
@@ -966,6 +1138,6 @@ st.caption("Every stage this run actually went through, from parsing the regex t
            "the query. Usually most of the total is the query execution(s) -- everything "
            "before that (parsing, loading, validating, generating SQL) is comparatively instant.")
 timing_df = pd.DataFrame(breakdown.as_rows())
-st.bar_chart(timing_df.set_index("stage")["ms"])
+st.bar_chart(timing_df.set_index("step")["ms"])
 st.dataframe(timing_df.style.format({"ms": "{:.2f}", "% of total": "{:.1f}%"}))
 st.metric("Total", f"{breakdown.total_ms:.1f} ms")

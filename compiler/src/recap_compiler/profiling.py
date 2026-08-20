@@ -29,10 +29,13 @@ class TimingBreakdown:
 
     def as_rows(self) -> list[dict]:
         """One row per stage, with each stage's share of the total -- ready
-        to hand to `pandas.DataFrame` or print as a table."""
+        to hand to `pandas.DataFrame` or print as a table. The column is
+        named "step", not "stage" -- the internal pipeline-stage
+        terminology (Stage A-G) is a spec/paper concept, not something a
+        workbench author should have to know to read this table."""
         total = self.total_ms or 1e-9  # guard against an all-zero breakdown
         return [
-            {"stage": name, "ms": ms, "% of total": 100 * ms / total}
+            {"step": name, "ms": ms, "% of total": 100 * ms / total}
             for name, ms in self.stages
         ]
 

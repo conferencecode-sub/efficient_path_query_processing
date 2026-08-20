@@ -120,7 +120,7 @@ def main() -> None:
 
     _section("Timing breakdown")
     for row in breakdown.as_rows():
-        print(f"{row['stage']:<32} {row['ms']:>9.2f} ms  ({row['% of total']:5.1f}%)")
+        print(f"{row['step']:<32} {row['ms']:>9.2f} ms  ({row['% of total']:5.1f}%)")
     print(f"{'TOTAL':<32} {breakdown.total_ms:>9.2f} ms")
     print("\n(most of this is the two query executions -- compiling the query itself "
           "is comparatively instant; that contrast is itself worth pointing out.)")

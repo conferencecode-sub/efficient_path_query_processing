@@ -29,6 +29,340 @@ but needs E working as its correctness baseline (comparing standard vs.
 optimized output for equivalence), so it comes after E/G. I (the workbench UI) comes last --
 it's glue over an already-working pipeline.
 
+## Completed: dropped "Module J" from user-facing labels too (2026-08-20)
+
+Follow-up to the "Stage"/"Phase" cleanup just below, per explicit user
+request to also clean the "Module" instances. Grepped for the actual
+rendered strings rather than assuming, same as before: only two
+user-facing spots used it (both inside the "Draft with LLM" panel) --
+the expander title `"Draft with LLM (Module J, optional)"` -> `"Draft
+with LLM (optional)"`, and the Backend radio's own tooltip, which also
+dropped a `"(see CHECKLIST.md's Module J history)"` aside -- an internal
+dev doc an end user has no reason to open, not just an internal-jargon
+label. The module docstring's own two "Module J" mentions (developer-
+facing, never rendered) were left alone, matching the same
+user-vs-developer-facing scoping the "Stage"/"Phase" cleanup used.
+
+No compiler-source file touched, no test needed a change; 169 tests still
+pass. Verified live via `AppTest`: the expander list now reads `"Draft
+with LLM (optional)"`, no exception.
+
+## Completed: dropped internal "Stage"/pipeline-letter jargon from user-facing labels (2026-08-20)
+
+Per explicit user request ("for the user perspective, can we remove the
+labels of 'Phase' and 'Stage'?") -- grepped the actual rendered UI text
+first rather than assuming: no "Phase" label exists anywhere in
+`webapp/app.py`, but "Stage" (and the internal Stage-A-through-G letter
+codes) appeared in several places an end user actually sees, same class
+of issue FR-38 already fixed for the word "factorized" (internal spec
+term leaking into author-facing UI).
+
+Fixed, all in the workbench/its shared timing helper, none of it
+compiler-source behavior:
+- `st.subheader("Optimized (Stage F)")` -> `"Optimized"`; `st.subheader("Standard (Stage E, unoptimized)")` -> `"Standard (unoptimized)"`.
+- The "Also run the unoptimized (Stage E) query..." checkbox label -> drops `"(Stage E)"`.
+- Every `timed_stage(breakdown, "X: description")` call in `webapp/app.py` had its `"X: "` letter prefix stripped (e.g. `"C: build transitions relation"` -> `"build transitions relation"`) -- these strings become row values in the timing-breakdown table/chart the author sees at the bottom of a run.
+- `profiling.py`'s `TimingBreakdown.as_rows()` renamed its own `"stage"` dict key to `"step"` (also shows up as a real column header/chart-axis label, not just internal terminology) -- `webapp/app.py`'s `timing_df.set_index("stage")` updated to `"step"` to match.
+
+**Deliberately left `demo_pipeline.py`'s own `timed_stage` calls with their
+letter prefixes** -- that's a CLI demo aimed at someone already engaging
+with the compiler's internals (same audience as this checklist), not the
+workbench's own end user, so the jargon-avoidance rationale doesn't apply
+there the same way; only fixed its one now-broken `row['stage']` ->
+`row['step']` reference so it keeps working after the rename.
+
+Verified: `demo_pipeline.py` run end-to-end (its own timing breakdown
+printed correctly with the new key), 169 tests pass after updating
+`test_profiling.py`'s one assertion that hardcoded the old `"stage"` key.
+
+## Completed: moved the "minimize the automaton first" checkbox to the regex input, shared by the preview and the aggregate table (not two independent copies) (2026-08-20)
+
+Per explicit user request: the checkbox used to live twice, in effect --
+once implicitly (FR-41's preview always minimized unconditionally) and
+once explicitly (FR-40's General-mode checkbox, gating only that table
+and, via a `session_state` read at Compile & run time, the actual query
+too). User asked to move the real, effective checkbox up to the "Label
+regex" subsection (by the regex input) and have it drive both the
+preview table there *and* the General-mode aggregate table -- and to
+remove the second copy from the aggregate section entirely.
+
+`webapp/app.py`: the checkbox (same key, `minimize_automaton`, same
+default `True`) now renders once, right after the regex parses, in the
+"Label regex" subsection -- effective for **both** structure modes now
+(previously it only ever rendered inside `if structure_mode ==
+"General":`, so a Factorized-mode run's actual compiled query depended
+on a leftover/never-set `session_state` value rather than a choice the
+author could see -- this was a real, if minor, hidden-coupling wrinkle,
+not something deliberately preserved). The preview's own `_preview_pairs`/
+`_preview_labels_by_pair` are computed once, right there, from whichever
+automaton the checkbox currently selects; the General-mode aggregate
+table further down was changed to **reuse those same two variables
+directly** instead of recomputing its own copy from a second `minimize_automaton`
+read -- so the two tables structurally cannot drift out of sync with each
+other, not just "happen to agree because they read the same flag."
+Compile & run's own fresh recomputation of `nfa` (kept deliberately
+independent for accurate timing, per its existing comment) now reads the
+plain `minimize_automaton` variable directly rather than a
+`session_state.get(..., False)` fallback, since the variable is now
+always defined whenever `use_regex` is True, regardless of structure
+mode.
+
+Updated `compiler_reqs.md`: FR-41 now describes the single shared choice;
+FR-40 notes its table no longer owns an independent one. No compiler-source
+file touched, no test file needed a change (pure UI wiring); 169 tests
+still pass. Verified live via `AppTest`: exactly one `minimize_automaton`
+checkbox exists (the old General-mode duplicate is gone) and it renders
+before the aggregate section's own widgets; toggling it changes the
+preview table's row count (4 -> 69 pairs on the bundled sample regex) and
+the General-mode aggregate table's row count together, in the same
+rerun; Compile & run succeeds with no errors with the checkbox in either
+state, and in Factorized mode too (confirming the now-shared checkbox
+doesn't break the mode that previously never rendered it at all).
+
+## Completed: moved "Draft with LLM" above `init_d` in General mode (2026-08-20)
+
+Per explicit user observation: the LLM box drafts `init_d` itself (along
+with everything else -- the per-pair table, `is_viable_d_final`,
+`finalize_d`), so it read backwards sitting *after* `init_d` and its
+dictionary-key type table, as if the author had to write `init_d` by hand
+first before being offered help. Checked real dependencies before moving
+anything: the draft call only needs `_pairs`/`_labels_by_pair` (from
+`minimize_automaton` + the transitions relation) and the edge schema --
+nothing about `custom_init_d`/`dictionary_keys` at all -- so nothing
+blocked the move.
+
+New order in General mode: caption -> `minimize_automaton` checkbox ->
+transition-pairs computed -> **Draft with LLM** -> `init_d` (+ its
+dictionary-key type table) -> the per-pair `update_d`/`is_viable_d` table
+(still preceded by its own "Example" expander, moved down alongside it
+rather than left stranded between the checkbox and the LLM box) -> `is_viable_d_final`/
+`finalize_d`. The callback mechanics are unaffected by widget declaration
+order (session-state writes from an `on_click` callback work regardless
+of whether the target widget is declared before or after the button in
+the script -- confirmed nothing here relied on the old order); only the
+caption wording changed (`"shown above"` -> `"shown further down"` for
+the guiding example, since it's no longer literally above the box).
+
+No test file needed changes (pure layout). Verified live via `AppTest`:
+widget order now reads `Backend` (inside the LLM expander) before
+`init_d()`; a real end-to-end draft against the local Ollama server still
+populates `custom_init_d`/etc. and shows the toast; a plain (non-LLM)
+Compile & run in General mode still succeeds with no errors -- confirming
+the reorder didn't disturb the ordinary hand-authoring path either. 169
+tests still pass.
+
+## Completed: draft-applied toast, and quieting the (benign) session-state log warning it surfaced (2026-08-20)
+
+Two small follow-ups from a real user run of the just-added Ollama
+backend: (1) they hit `_LOGGER.warning(..., stack_info=True)` from
+Streamlit's own `check_session_state_rules` -- looks exactly like a crash
+traceback in the terminal, but is neither an exception nor a bug: it
+fires because the "Draft with LLM" button's callback intentionally writes
+into `custom_init_d`'s session-state key before that widget's own
+`value=` renders on the next pass -- the documented, correct way to make
+a widget pick up a programmatically-set value, and the same mechanism
+this feature has relied on since the hosted-Claude version shipped
+2026-08-18 (confirmed: not new, not backend-specific). (2) besides the
+noise, there was also a real, if minor, UX gap underneath it: a
+*confident* draft (no unconfident pairs) silently changed the boxes below
+with zero user-facing feedback at all -- only the unconfident-pairs case
+got an `st.warning`.
+
+Fixed both, per explicit user request ("pre-fill the box for each
+constraint... maybe also notify the user" -- confirmed the pre-fill
+itself was already exactly the existing design, covering every function
+box from the one constraint description, so this was about the missing
+notification specifically): added an `st.toast` call inside
+`_run_llm_draft` reporting which backend drafted, into how many boxes/
+pairs -- deliberately a toast, not a permanent `st.success`, since the
+draft state it'd be keyed on stays in `session_state` across every later
+rerun, so a non-transient message would show forever after the first
+successful draft rather than just once per click. `st.toast` is the one
+element type documented to work from inside a widget callback (queues
+onto the next rerun's overlay rather than needing a spot in the script's
+own element tree) -- confirmed live via `AppTest`'s own `at.toast`
+accessor, a real click against the actual running local Ollama server.
+
+New `compiler/.streamlit/config.toml` (`[global]
+disableWidgetStateDuplicationWarning = true`, the officially documented
+option for exactly this warning) quiets the log noise going forward --
+confirmed via a second live run that no warning is logged and the draft
+still applies correctly. No test file needed a change (nothing here is
+unit-testable behavior, just callback-adjacent UI/logging polish); 169
+tests still pass.
+
+## Completed: Module J backend toggle -- local Ollama is back, alongside (not instead of) the hosted Claude API, plus an inline API-key field (2026-08-20)
+
+Per explicit user request for a no-authentication option: the Ollama
+backend removed 2026-08-11 (see "Module J -- built, live-tested, then
+removed" below) is reintroduced as a **toggle**, not a replacement of the
+hosted-API version reintroduced 2026-08-18 -- both now live side by side,
+sharing every line of prompt construction, the JSON schema, and the
+fail-safe/parsing logic in `llm_proposer.py`; only *how the raw draft
+dict is obtained* differs. Deliberately not given its own `compiler_reqs.md`
+FR number, matching the existing decision that Module J as a whole has no
+Part I spec section (see this file's 2026-08-10 reconciliation note and
+`compiler_reqs.md`'s own matching note).
+
+`llm_proposer.py`: `propose_general_aggregate` gained a `backend`
+parameter (`"anthropic"` default, or `"ollama"`), plus `api_key` (an
+explicit key that overrides `ANTHROPIC_API_KEY`) and `ollama_host`/
+`ollama_call` for the new path. New `_call_ollama`: a stdlib-only
+(`urllib`, no new dependency) POST to a local `ollama serve` at
+`http://localhost:11434/api/chat` (or `OLLAMA_HOST`), using Ollama's own
+`format=<json schema>` structured-output feature -- passing `_TOOL_SCHEMA`'s
+own `input_schema` straight through, since it's already a plain JSON
+Schema object. Confirmed working directly against this machine's
+already-pulled `qwen2.5:3b-instruct` before wiring it into the app at all
+(`curl .../api/chat` with a tiny schema, real response). `_client_from_env`
+now takes an optional `api_key` that overrides the environment variable
+when given.
+
+`webapp/app.py`'s "Draft with LLM" panel: a `Backend` radio
+("Hosted Claude API" / "Local Ollama (no API key)"); the Claude branch
+gains an optional password-type "Anthropic API key" field (pasted
+directly into the running app, overriding `ANTHROPIC_API_KEY`, never
+written to disk by this panel) so a user doesn't have to have shell
+access to the process to connect their own key; the Ollama branch gains
+"Ollama model" (default `qwen2.5:7b-instruct-q4_K_M`, the best-performing
+of the three tried in the original version) and "Ollama host" (blank ->
+default) text inputs. The draft button's own label reflects whichever
+backend is currently selected.
+
+New tests in `test_llm_proposer.py` (7 more, 16 total in this file):
+Ollama-backend success via an injected `ollama_call` fake (no real
+server/network needed, mirroring how the Anthropic tests inject `client`),
+missing-field parse error, default-model selection, an unknown-backend
+`ValueError`, `_client_from_env`'s api-key-override/fallback behavior, and
+one real (not faked) call to `_call_ollama` against an always-refused port
+(`http://localhost:1`) confirming the actual function raises
+`ProposerUnavailableError` -- fast, no timeout wait, no real Ollama
+server needed for that one either. 169 tests pass overall (was 162).
+
+Verified live end-to-end against the real, already-running local
+`ollama serve` (not just injected fakes): a real draft via
+`qwen2.5:3b-instruct` completed in ~14s and produced a sensible (if not
+perfectly sound -- expected, same "first draft, not a trusted answer"
+framing as the hosted backend) aggregate. Also verified via
+`streamlit.testing.v1.AppTest`: the backend radio and its
+backend-specific fields (Ollama model/host, or the Claude API-key field)
+render with no exception in either mode, and a full "Draft with Local
+Ollama" click against the real server populates `custom_init_d`/etc. and
+increments the draft version with no exception or error box, exactly
+like the hosted path already did.
+
+## Completed: dictionary-key type editor -- override an inferred type from a dropdown (2026-08-20)
+
+Per explicit user request: the read-only `name`/`sql_type` table shown
+beneath `init_d` (dictionary keys inferred straight from `init_d`'s own
+struct literal, 2026-08-10) becomes an editable `st.data_editor` with a
+`SelectboxColumn` dropdown on `sql_type` -- `name` stays disabled/derived,
+so `init_d` remains the sole source of truth for *which* keys exist (per
+the original 2026-08-10 rationale), only the *type* of an already-existing
+key is now author-overridable. New `compiler_reqs.md` FR-42.
+
+Not cosmetic: `typed_init_d` (`selective_aggregate.py`) already casts
+`init_d`'s anchor to each key's declared `sql_type`, and both Stage E
+(`standard_sql.py`) and Stage F (`optimizer.py`) call it -- so this
+override genuinely changes the generated SQL. Confirmed directly:
+`typed_init_d` on `{last_time: NULL}` with the type left at its own
+DuckDB-inferred `INTEGER` emits `CAST(NULL AS INT)`; declaring the same
+key `BIGINT` instead emits `CAST(NULL AS BIGINT)`. This closes a real,
+previously-unfixable-from-the-UI gap: the exact same "bare `NULL` infers
+too-narrow" bug `typed_init_d`'s own docstring says a real user hit before
+(a BIGINT epoch-millisecond timestamp overflowing an inferred INTEGER)
+could not, until now, be fixed by a workbench author at all, only by
+library-aggregate authors declaring `DictionaryKey.sql_type` directly in
+Python.
+
+New `webapp/app.py` helper `_dictionary_key_type_editor`: the editor's own
+widget key is derived from the *inferred* `(name, type)` pairs, not a
+fixed string, so an `init_d` edit that changes what DuckDB itself would
+infer resets the table to the fresh inference (no stale override
+silently surviving a key's own meaning changing) -- an edit that leaves
+inference unchanged keeps whatever override the author already chose.
+Dropdown options are a fixed common-scalar-type list unioned with
+whatever's currently inferred (so a container-typed key, e.g. a trail's
+`edge_ids: INTEGER[]`, always has its own current type as a valid option
+even though it isn't itself offered as something a plain scalar key could
+be overridden *into*). Wired into both the Factorized and General
+custom-aggregate branches, replacing their near-identical read-only
+`st.dataframe` calls. Also fixed a stale/incorrect help-text example
+caught while touching this code: `init_d`'s own tooltip claimed
+`{last_time: NULL}` infers "one nullable DOUBLE key" -- confirmed via a
+direct DuckDB query that a bare `NULL` actually infers as INTEGER, not
+DOUBLE; reworded to state the real inferred type and point at the new
+override table.
+
+No compiler-source file touched; 162 tests still pass. Verified live via
+`streamlit.testing.v1.AppTest`: enabling custom-aggregate authoring in
+both Factorized and General modes raises no exception, and a full
+Compile & run still succeeds with no errors in either mode (this
+version's `AppTest` has no introspection support for `st.data_editor`
+itself, so the dropdown's own interaction couldn't be driven from a test
+script -- the underlying `typed_init_d` behavior it feeds was verified
+directly instead, as above).
+
+## Completed: regex acceptance feedback -- minimized-automaton preview + accepted banner (2026-08-20)
+
+Per explicit user request: as soon as the "Label regex" input (Section 2)
+parses, show the minimized automaton immediately below it, and give a
+clear visual signal that the regex was accepted -- previously the only
+feedback was silence on success and an `st.error` box on failure.
+
+`webapp/app.py`: after the existing parse/ambiguity-check `try`/`except`
+(which already `st.stop()`s the whole script on a bad regex, so anything
+placed after it only runs once the regex is known-valid), added: an
+`st.success` banner reporting the minimized state/transition-pair counts
+plus `q0`/accepting states, and an always-expanded `st.dataframe` showing
+the minimized transitions relation (`from_state`/`to_state`/`labels`,
+same shape as the General-mode authoring table further down). Wrapped the
+regex `st.text_input` in `st.container(key="regex_input_box")` and added
+one `st.markdown(..., unsafe_allow_html=True)` `<style>` rule targeting
+`.st-key-regex_input_box [data-baseweb="base-input"]` to outline the box
+in green on the same success path -- Streamlit's `key` docs promise a
+`st-key-<key>` CSS class on the widget for exactly this kind of targeting,
+but **the actual green outline was not visually verified in a real
+browser** (none available in this sandboxed environment, consistent with
+every other workbench session in this file); the `st.success` banner is
+the verified, guaranteed part of the signal. Fixed key chosen (not
+interpolated with `label_column`, unlike the text_input's own key)
+specifically so the CSS selector never has to handle arbitrary column-name
+characters.
+
+No compiler-source file touched; 162 tests still pass. Verified live via
+`streamlit.testing.v1.AppTest`: a valid regex shows the success banner
+("Regex accepted -- minimizes to 3 states / 4 transition pairs...") and
+two dataframes render; an invalid regex (`"(unclosed(paren"`) still hits
+the pre-existing `st.error`/`st.stop()` path with no exception and no
+success banner, unchanged from before this change.
+
+## Completed: merge-function authoring box extended with `is_mergable_d` (2026-08-20)
+
+FR-35's merge-function sketch box (2026-08-17) only captured `merge_d(D1,
+D2)` -- the dictionary produced when two fragments join at a seam -- but
+missed its Boolean gate: `is_mergable_d(D1, D2)`, the merge-time
+counterpart of `is_viable_d` deciding whether the two fragments may be
+joined at all before `merge_d` combines them. The selective-aggregate
+"function count" is 7, not 5 or 6: Definition 8's five
+(`init_d`/`update_d`/`finalize_d`/`is_viable_d`/`is_viable_d_final`) plus
+these two merge-scaffolding functions, which are outside Definition 8
+proper and exist only for the FR-35 sketch box (Section 12 non-goal 3 --
+still not consumed by Stage E/F, same as `merge_d` already was).
+
+`webapp/app.py`: added an `is_mergable_d(D1, D2)` text area (key
+`merge_is_mergable_d_body`, default `TRUE`) next to the existing
+`D1`/`D2`/`merge_d(D1, D2)` boxes, in both the Factorized and General
+custom-aggregate expanders; renamed the existing box's label from
+`merge(D1, D2)` to `merge_d(D1, D2)` for consistency. Same treatment as
+`merge_d` before it: captured via its widget key for display only, never
+read by any downstream code. `compiler_reqs.md`'s FR-35 updated to
+describe both functions. No compiler-source file touched -- 162 tests
+still pass unchanged. Verified live via `streamlit.testing.v1.AppTest`:
+`merge_is_mergable_d_body` renders alongside `merge_function_body` in
+both Factorized (after checking "Author a custom factorized aggregate")
+and General authoring modes.
+
 ## Completed: Stage F's non-factorized `update_d` reverted to one flat `CASE` per key, plus a real uniform-body-collapse optimization -- measured, not assumed (2026-08-18)
 
 Earlier the same day, non-factorized `update_d` was changed to build one

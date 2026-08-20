@@ -1,12 +1,19 @@
-"""Tests for Module J's reintroduced LLM proposer -- a hosted Claude model
-drafts a full per-transition-pair General selective aggregate. No test here
-makes a real network call: `client` is injected as a small fake exposing
-just `.messages.create(...)`, returning a canned tool-use response, the
-same shape the real Anthropic SDK returns."""
+"""Tests for Module J's LLM proposer -- either a hosted Claude model or a
+local Ollama model drafts a full per-transition-pair General selective
+aggregate. No test here makes a real network call: the Anthropic backend
+gets `client` injected as a small fake exposing just
+`.messages.create(...)` (the same shape the real Anthropic SDK returns);
+the Ollama backend gets `ollama_call` injected as a plain
+`(model, prompt, host=None) -> dict` callable (the same shape
+`_call_ollama` itself returns, one HTTP round trip already unwrapped).
+`_call_ollama` itself is exercised once, for real, against a host with
+nothing listening -- fast (connection refused, no timeout wait) and
+confirms the real function raises the right error without needing an
+actual Ollama server."""
 import pytest
 
 from recap_compiler.errors import ProposerParseError, ProposerUnavailableError
-from recap_compiler.llm_proposer import propose_general_aggregate
+from recap_compiler.llm_proposer import _call_ollama, _client_from_env, propose_general_aggregate
 
 
 class _FakeToolUseBlock:
@@ -162,3 +169,83 @@ def test_missing_api_key_raises_proposer_unavailable(monkeypatch):
     with pytest.raises(ProposerUnavailableError):
         propose_general_aggregate(constraint_description="x", transition_pairs=_PAIRS,
                                    labels_by_pair=_LABELS, edge_columns=_EDGE_COLUMNS, client=None)
+
+
+def test_unknown_backend_raises_value_error():
+    with pytest.raises(ValueError):
+        propose_general_aggregate(constraint_description="x", transition_pairs=_PAIRS,
+                                   labels_by_pair=_LABELS, edge_columns=_EDGE_COLUMNS,
+                                   backend="gemini")
+
+
+def _ollama_draft(*, per_pair, is_viable_d_final="TRUE", is_viable_d_final_confident=True,
+                   init_d="{last_amount: NULL}", finalize_d="D"):
+    return {
+        "init_d": init_d, "finalize_d": finalize_d, "is_viable_d_final": is_viable_d_final,
+        "is_viable_d_final_confident": is_viable_d_final_confident, "per_pair": per_pair,
+    }
+
+
+def test_ollama_backend_confident_draft_used_verbatim():
+    per_pair = [
+        {"from_state": 0, "to_state": 1, "update_d": "{last_amount: e.amount}",
+         "is_viable_d": "TRUE", "is_viable_d_confident": True},
+        {"from_state": 1, "to_state": 1, "update_d": "{last_amount: e.amount}",
+         "is_viable_d": "e.amount <= D.last_amount", "is_viable_d_confident": True},
+    ]
+    calls = []
+
+    def fake_ollama_call(model, prompt, host=None):
+        calls.append((model, prompt, host))
+        return _ollama_draft(per_pair=per_pair)
+
+    result = propose_general_aggregate(
+        constraint_description="amounts must never increase", transition_pairs=_PAIRS,
+        labels_by_pair=_LABELS, edge_columns=_EDGE_COLUMNS, backend="ollama",
+        model="qwen2.5:7b-instruct-q4_K_M", ollama_call=fake_ollama_call)
+
+    assert result.init_d == "{last_amount: NULL}"
+    assert result.is_viable_d == {(0, 1): "TRUE", (1, 1): "e.amount <= D.last_amount"}
+    assert len(calls) == 1
+    assert calls[0][0] == "qwen2.5:7b-instruct-q4_K_M"
+
+
+def test_ollama_backend_missing_field_raises_parse_error():
+    per_pair = [{"from_state": 0, "to_state": 1, "update_d": "D"}]  # missing is_viable_d/confidence
+    with pytest.raises(ProposerParseError):
+        propose_general_aggregate(
+            constraint_description="x", transition_pairs=_PAIRS, labels_by_pair=_LABELS,
+            edge_columns=_EDGE_COLUMNS, backend="ollama",
+            ollama_call=lambda model, prompt, host=None: _ollama_draft(per_pair=per_pair))
+
+
+def test_ollama_backend_defaults_to_its_own_model_when_none_given():
+    seen = {}
+
+    def fake_ollama_call(model, prompt, host=None):
+        seen["model"] = model
+        return _ollama_draft(per_pair=[])
+
+    propose_general_aggregate(
+        constraint_description="x", transition_pairs=[], labels_by_pair={},
+        edge_columns=_EDGE_COLUMNS, backend="ollama", ollama_call=fake_ollama_call)
+    assert seen["model"] == "qwen2.5:7b-instruct-q4_K_M"
+
+
+def test_client_from_env_prefers_explicit_api_key_over_environment(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "env-key")
+    client = _client_from_env("pasted-key")
+    assert client.api_key == "pasted-key"
+
+
+def test_client_from_env_falls_back_to_environment_when_no_explicit_key(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "env-key")
+    client = _client_from_env(None)
+    assert client.api_key == "env-key"
+
+
+def test_call_ollama_unreachable_host_raises_proposer_unavailable():
+    # Port 1 is a real, always-refused connection on any host -- no server,
+    # no timeout wait, so this is fast without needing a real Ollama server.
+    with pytest.raises(ProposerUnavailableError):
+        _call_ollama("some-model", "some prompt", host="http://localhost:1")

@@ -37,8 +37,8 @@ def test_as_rows_reports_percentage_of_total():
     breakdown.stages = [("a", 25.0), ("b", 75.0)]
     rows = breakdown.as_rows()
     assert rows == [
-        {"stage": "a", "ms": 25.0, "% of total": 25.0},
-        {"stage": "b", "ms": 75.0, "% of total": 75.0},
+        {"step": "a", "ms": 25.0, "% of total": 25.0},
+        {"step": "b", "ms": 75.0, "% of total": 75.0},
     ]
 
 
