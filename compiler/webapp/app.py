@@ -277,8 +277,14 @@ def _signature_set(result, columns=("v", "q", "path_length")) -> set:
 def _expand_struct_columns(result) -> pd.DataFrame:
     """Cosmetic: the `D`/`result` columns come back as Python dicts (DuckDB
     structs); expand them into their own columns for a readable table
-    instead of showing raw dict reprs."""
+    instead of showing raw dict reprs. Also drops the internal NFA state
+    column `q` -- it's load-bearing for the equivalence check (which reads
+    it straight off `result`, not off this display table), but it's
+    compiler-internal plumbing that shouldn't appear in the user-facing
+    output table."""
     df = pd.DataFrame(result.rows, columns=result.columns)
+    if "q" in df.columns:
+        df = df.drop(columns=["q"])
     for col in list(df.columns):
         if len(df) and isinstance(df[col].iloc[0], dict):
             expanded = pd.json_normalize(df[col]).add_prefix(f"{col}.")

@@ -116,7 +116,12 @@ def main() -> None:
     print(f"\nequivalence check: PASSED (both queries found the exact same {len(standard_result.rows)} paths)")
     print(f"speedup: {speedup:.2f}x")
 
-    print(f"\nsample optimized result row: {optimized_result.rows[0]}")
+    # Drop the internal NFA state column `q` from the printed sample --
+    # it's load-bearing for the equivalence check above, but it's
+    # compiler-internal plumbing that shouldn't appear in output tables.
+    sample_row = dict(zip(optimized_result.columns, optimized_result.rows[0]))
+    sample_row.pop("q", None)
+    print(f"\nsample optimized result row: {sample_row}")
 
     _section("Timing breakdown")
     for row in breakdown.as_rows():

@@ -1946,3 +1946,15 @@ prototype, Kùzu, and a plain-DuckDB baseline on the same Q1 query).**
   (...)` as a string test 4x per row to know normal-vs-fraud, where
   `recap-inline`'s hand-written query gets that distinction for free via
   an integer-state `CASE` it already needed anyway.
+
+## Completed: output tables no longer show the internal NFA state column (2026-08-20)
+The `q` column (automaton state, tracked internally in every `Paths` row
+so the equivalence check can compare `(v, q, path_length)` signatures
+between the standard and optimized queries) was leaking into user-facing
+output: both result tables in the workbench UI and `demo_pipeline.py`'s
+printed sample row showed it. Fixed by dropping `q` at display time only
+-- `_expand_struct_columns` (webapp) and the sample-row print
+(`demo_pipeline.py`) now filter it out by column name, while the
+equivalence check itself still reads `q` off the raw `QueryResult`
+unchanged. 169 tests still pass; re-ran `demo_pipeline.py` to confirm
+`q` no longer appears in the printed row.
