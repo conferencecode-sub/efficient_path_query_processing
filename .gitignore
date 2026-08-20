@@ -22,3 +22,9 @@ experiments/datasets/
 # .git) -- not meant to live inside this repo at all; investigate/remove
 # separately rather than committing it.
 /ReCAP/
+
+# Paper LaTeX source -- this repo is a conference-submission code artifact;
+# paper/manuscript source (incl. anything that could de-anonymize authors,
+# e.g. a reviewer response letter) does not belong in it. Moved to
+# ~/recap_paper_tex/ (mirroring the same relative paths) instead.
+*.tex
